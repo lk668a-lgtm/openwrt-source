@@ -36,22 +36,26 @@ if [ ! -f /etc/config/wireless ] && [ -x /bin/config_generate ]; then
 fi
 
 if [ -f /etc/config/wireless ]; then
-	_idx=0
-	for _r in radio0 radio1; do
-		uci -q get wireless."$_r" >/dev/null || continue
-		_sec="default_${_r}"
-		uci -q get wireless."$_sec" >/dev/null || continue
-		if [ "$_idx" = "0" ]; then
-			uci set wireless."$_sec".ssid='Buer-Wrt'
-		else
-			uci set wireless."$_sec".ssid='Buer-Wrt-5G'
+	# 按 radio 实际存在的射频来配；band=5g 用 -5G 后缀
+	# 注意：不是每台机器每个 radio 都自带 default_radioN 段（实测 XR30 只有 default_radio1），
+	# 缺段就自己建，否则会出现"2.4G 没 SSID、5G 顶着 2.4G 名字"。
+	for _r in $(uci -q show wireless | grep -o '^wireless\.radio[0-9]*=wifi-device' | cut -d. -f2 | cut -d= -f1); do
+		case "$(uci -q get wireless."$_r".band)" in
+			5g) _ssid='Buer-Wrt-5G' ;;
+			*)  _ssid='Buer-Wrt' ;;
+		esac
+		if ! uci -q get wireless.default_"$_r" >/dev/null 2>&1; then
+			uci -q set wireless.default_"$_r"=wifi-iface
+			uci -q set wireless.default_"$_r".device="$_r"
+			uci -q set wireless.default_"$_r".network='lan'
+			uci -q set wireless.default_"$_r".mode='ap'
 		fi
-		uci set wireless."$_sec".encryption='psk2'
-		uci set wireless."$_sec".key='12345678'
-		uci set wireless."$_sec".disabled='0'
-		_idx=$((_idx + 1))
+		uci -q set wireless.default_"$_r".ssid="$_ssid"
+		uci -q set wireless.default_"$_r".encryption='psk2'
+		uci -q set wireless.default_"$_r".key='12345678'
+		uci -q set wireless.default_"$_r".disabled='0'
 	done
-	uci commit wireless
+	uci -q commit wireless
 fi
 
 uci commit system 2>/dev/null

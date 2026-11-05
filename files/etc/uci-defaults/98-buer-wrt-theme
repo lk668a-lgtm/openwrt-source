@@ -12,7 +12,9 @@
 # 本脚本只在首次开机（uci-defaults）时跑一次；用户之后的修改不会被覆盖。
 
 # 1) 默认主题 = argon（仅当该键不存在时才设置，尊重用户/上游已有选择）
-if ! uci -q get luci.main.mediaurlbase >/dev/null; then
+# 出厂默认是 bootstrap；用户自己选过别的主题（不是 bootstrap）就尊重不动
+_cur_theme="$(uci -q get luci.main.mediaurlbase)"
+if [ -z "$_cur_theme" ] || [ "$_cur_theme" = "/luci-static/bootstrap" ]; then
 	uci set luci.main.mediaurlbase='/luci-static/argon'
 fi
 
