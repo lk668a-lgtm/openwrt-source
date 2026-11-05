@@ -1,0 +1,8 @@
+#!/bin/sh
+# 出厂默认更新源（界面不显示，只在这里与 uci 里维护）
+# 只在用户没配过时写入，升级不会覆盖用户自己的设置。
+if ! uci -q get tkproxy.main.update_url >/dev/null 2>&1; then
+	uci -q set tkproxy.main.update_url='https://up.lkkami.top/tkproxy/manifest.json'
+	uci -q commit tkproxy
+fi
+exit 0

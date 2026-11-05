@@ -1,0 +1,386 @@
+<%+header%>
+<%+tkproxy/esc%>
+<link rel="stylesheet" href="<%=esc(resource)%>/tkproxy/app.css?v=<%=esc(ver or "0")%>" />
+
+<%
+	local q = quota or { limit = 16, g2 = 0, g5 = 0 }
+	local row_list = rows or {}
+	local err_list = errors or {}
+	local has_err = false
+	for _, e in ipairs(err_list) do
+		if e.msg and e.msg ~= "" then has_err = true end
+	end
+
+	-- 节点共用提示（业务要求：只提示，不禁止）
+	local usage_warn = {}
+	local _cnt = {}
+	for _, r in ipairs(row_list) do
+		local n = r.node_name or ""
+		if n ~= "" then _cnt[n] = (_cnt[n] or 0) + 1 end
+	end
+	for _, r in ipairs(row_list) do
+		local n = r.node_name or ""
+		if n ~= "" and (_cnt[n] or 0) > 1 then
+			usage_warn[r.ssid] = "与其它线路共用出口（仅供参考）"
+		end
+	end
+%>
+
+<div class="tk-wrap" data-tk-page="dashboard"
+	data-tk-base="<%=esc(urlbase)%>"
+	data-tk-token="<%=esc(token)%>"
+	data-tk-deployed="<% if deployed then %>1<% else %>0<% end %>"
+	data-tk-busy="<% if job_running then %>1<% else %>0<% end %>"
+	data-tk-limit="<%=esc(q.limit)%>"
+	data-tk-used-2g="<%=esc(q.g2)%>"
+	data-tk-used-5g="<%=esc(q.g5)%>">
+
+	<!-- 授权信息条（合并在概览顶部，不再单独占卡） -->
+	<div class="tk-licbar" data-license-card>
+		<div class="tk-licbar-left">
+			<span class="tk-licbar-item"><span class="tk-licbar-k">版本</span><b data-lic-ver>—</b></span>
+			<span class="tk-licbar-item"><span class="tk-licbar-k">授权</span><b data-lic-badge>读取中…</b></span>
+			<span class="tk-licbar-item"><span class="tk-licbar-k">授权期</span><b data-lic-exp>—</b></span>
+			<span class="tk-licbar-item"><span class="tk-licbar-k">卡密</span><b data-lic-card>—</b></span>
+			<span class="tk-licbar-item tk-licbar-m"><span class="tk-licbar-k">机器码</span><code data-lic-machine>—</code></span>
+			<span class="tk-licbar-item"><span class="tk-licbar-k">最新版本</span><b data-upd-latest>未检查</b></span>
+		</div>
+		<div class="tk-licbar-right">
+			<button type="button" class="cbi-button tk-btn-sm" data-tk-act="upd-check">检查更新</button>
+			<button type="button" class="cbi-button cbi-button-apply tk-btn-sm" data-tk-act="upd-install" hidden>立即更新</button>
+			<button type="button" class="cbi-button tk-btn-sm" data-tk-act="lic-verify">重新校验授权</button>
+			<button type="button" class="cbi-button cbi-button-remove tk-btn-sm" data-tk-act="lic-reset">清除授权</button>
+			<span class="tk-verdict" data-lic-out></span>
+			<span class="tk-verdict" data-upd-out></span>
+		</div>
+	</div>
+
+	<div class="tk-hero">
+		<div class="tk-hero-main">
+			<div class="tk-eyebrow">TIKTOK 多线路 · 一 SSID 一出口</div>
+			<h2 class="tk-title">线路概览</h2>
+			<p class="tk-sub">每条线路独占一个 SSID 与网段，出口 IP 固定在对应节点上；节点故障时只会断线，不会偷偷换 IP。</p>
+		</div>
+		<div class="tk-hero-actions">
+		</div>
+	</div>
+
+	<!-- 开箱自检状态条（t_d32788de）：全绿「待机 · 可直接使用」/ 有提醒黄色 / 有阻断红色 / 没跑过灰色 -->
+	<div class="tk-bootbar" data-bootbar hidden>
+		<span class="tk-bootbar-dot" data-bootbar-dot></span>
+		<span class="tk-bootbar-text" data-bootbar-text>自检读取中…</span>
+		<span class="tk-bootbar-sub" data-bootbar-sub></span>
+		<span class="tk-bootbar-actions">
+			<button type="button" class="cbi-button cbi-button-apply tk-btn-sm" data-bootbar-run hidden>立即自检</button>
+			<button type="button" class="cbi-button tk-btn-sm" data-bootbar-detail hidden>查看明细</button>
+			<button type="button" class="cbi-button cbi-button-remove tk-btn-sm" data-bootbar-fix hidden>一键修复</button>
+		</span>
+	</div>
+	<div class="tk-bootbar-detail" data-bootbar-list hidden></div>
+
+	<div class="tk-stats">
+		<div class="tk-stat">
+			<div class="tk-stat-k">线路</div>
+			<div class="tk-stat-v"><span data-tk-stat-total><%=esc(#row_list)%></span><small> 条</small></div>
+		</div>
+		<div class="tk-stat<% if q.g2 >= q.limit then %> is-warn<% end %>" data-tk-quota-card="g2">
+			<div class="tk-stat-k">2.4G 名额</div>
+			<div class="tk-stat-v"><span data-tk-stat-g2><%=esc(q.g2)%></span><small> / <span data-tk-stat-limit><%=esc(q.limit)%></span></small></div>
+		</div>
+		<div class="tk-stat<% if q.g5 >= q.limit then %> is-warn<% end %>" data-tk-quota-card="g5">
+			<div class="tk-stat-k">5G 名额</div>
+			<div class="tk-stat-v"><span data-tk-stat-g5><%=esc(q.g5)%></span><small> / <span data-tk-stat-limit><%=esc(q.limit)%></span></small></div>
+		</div>
+		<div class="tk-stat">
+			<div class="tk-stat-k">部署状态</div>
+			<div class="tk-stat-v tk-stat-state"><% if deployed then %>已部署<% else %>未部署<% end %></div>
+		</div>
+	</div>
+
+	<section class="tk-card tk-wb" data-core-check>
+		<div class="tk-card-head">
+			<h3>系统插件自检</h3>
+			<span class="tk-card-meta">换机器 / 发给别人用之前，先跑这个</span>
+		</div>
+		<p class="tk-hint">
+			检测这台 OpenWrt 能不能跑本插件：Xray 核心、nft/tproxy 内核模块、dnsmasq、无线射频与 AP 名额。
+			<b>阻断项</b>不修就用不了，<b>警告项</b>可继续。
+		</p>
+		<div class="tk-core-actions">
+			<button type="button" class="cbi-button cbi-button-apply" data-tk-act="core-check">开始自检</button>
+			<button type="button" class="cbi-button cbi-button-remove" data-tk-act="core-fix" hidden>一键修复（自动安装缺失核心）</button>
+			<span class="tk-core-sum" data-core-out></span>
+		</div>
+		<!-- 结果就地显示在这个区域里，紧凑、不弹窗、不放大 -->
+		<div class="tk-core-list" data-core-list hidden></div>
+	</section>
+
+	<section class="tk-card tk-wb">
+		<div class="tk-card-head">
+			<h3>① 导入节点</h3>
+			<span class="tk-card-meta">节点列表：<b><%=esc(#(pool or {}))%></b> 个</span>
+		</div>
+		<p class="tk-hint">一行一个节点链接，支持 vless / vmess / trojan / ss；<b style="color:#d32f2f">Hysteria2、TUIC、Snell 协议不支持，导入时会被拦截并标红</b>；重复的会自动去重，坏链接单独列出。</p>
+		<textarea id="tk-wb-nodes" class="cbi-input-text tk-textarea tk-textarea-link" spellcheck="false"
+			placeholder="vless://uuid@1.2.3.4:443?...#新加坡04&#10;vmess://eyJ2IjoiMiIs..."></textarea>
+		<div class="tk-actions">
+			<button type="button" class="cbi-button tk-btn-warn" data-tk-act="wb-preview">解析预览</button>
+			<button type="button" class="cbi-button cbi-button-apply" data-tk-act="wb-import">导入节点</button>
+		</div>
+		<div class="tk-verdict" data-wb-import-out></div>
+
+		<!-- 解析预览：先看清 名称/协议/主机/重复/合法，再决定导入 -->
+		<div class="tk-preview" data-wb-preview hidden>
+			<div class="tk-preview-head" data-wb-preview-head></div>
+			<div class="tk-preview-body">
+				<table class="tk-table tk-preview-table">
+					<thead>
+						<tr><th>#</th><th>名称</th><th>协议</th><th>主机</th><th>重复</th><th>合法</th></tr>
+					</thead>
+					<tbody data-wb-preview-body></tbody>
+				</table>
+			</div>
+		</div>
+	</section>
+
+	<section class="tk-card tk-wb">
+		<div class="tk-card-head">
+			<h3>② 创建 WiFi</h3>
+			<span class="tk-card-meta">2.4G 已用 <b><%=esc(q.g2)%></b>/<%=esc(q.limit)%> · 5G 已用 <b><%=esc(q.g5)%></b>/<%=esc(q.limit)%></span>
+		</div>
+		<p class="tk-hint">创建后即出现在下方表格，可逐条启用/禁用、逐条选节点。禁用不占射频名额。</p>
+		<!-- 一行一个频段：2.4G 一行、5G 一行，各自独立参数 -->
+		<div class="tk-band-rows">
+			<div class="tk-band-row is-2g">
+				<div class="tk-band-row-head">
+					<span class="tk-band-badge">2.4G</span>
+					<span class="tk-band-sub">radio0 · 单射频上限 16 个 SSID</span>
+				</div>
+				<div class="tk-band-row-fields">
+					<label class="tk-inline-field">
+						<span>条数</span>
+						<span class="tk-count-row">
+							<input id="tk-2g-count" class="cbi-input-text tk-count-input" type="number" min="1" max="16" value="1" />
+							<button type="button" class="tk-step" data-tk-step="tk-2g-count:-1" title="减 1">−</button>
+							<button type="button" class="tk-step" data-tk-step="tk-2g-count:1" title="加 1">＋</button>
+							<button type="button" class="tk-step tk-step-fill" data-tk-fill="2g" title="填入本射频剩余名额">填满</button>
+						</span>
+					</label>
+					<label class="tk-inline-field">
+						<span>前缀</span>
+						<input id="tk-2g-prefix" class="cbi-input-text" value="TK2.4G-" />
+					</label>
+					<label class="tk-inline-field">
+						<span>起始序号</span>
+						<input id="tk-2g-start" class="cbi-input-text" type="number" min="1" value="1" />
+					</label>
+					<label class="tk-inline-field">
+						<span>密码</span>
+						<style>
+		/* 密码留空时的灰色提示：深色/浅色主题下都要看得见，且明显区别于已输入文字 */
+		#tk-2g-pass::placeholder, #tk-5g-pass::placeholder { color: #9aa0a6 !important; opacity: 1; }
+		</style>
+		<input id="tk-2g-pass" class="cbi-input-text" placeholder="留空＝abc123456" />
+					</label>
+					<button type="button" class="cbi-button cbi-button-apply tk-band-btn" data-tk-act="wb-create-2g">创建 2.4G WiFi</button>
+				</div>
+			</div>
+			<div class="tk-band-row is-5g">
+				<div class="tk-band-row-head">
+					<span class="tk-band-badge">5G</span>
+					<span class="tk-band-sub">radio1 · 单射频上限 16 个 SSID（含主 AP）</span>
+				</div>
+				<div class="tk-band-row-fields">
+					<label class="tk-inline-field">
+						<span>条数</span>
+						<span class="tk-count-row">
+							<input id="tk-5g-count" class="cbi-input-text tk-count-input" type="number" min="1" max="16" value="1" />
+							<button type="button" class="tk-step" data-tk-step="tk-5g-count:-1" title="减 1">−</button>
+							<button type="button" class="tk-step" data-tk-step="tk-5g-count:1" title="加 1">＋</button>
+							<button type="button" class="tk-step tk-step-fill" data-tk-fill="5g" title="填入本射频剩余名额">填满</button>
+						</span>
+					</label>
+					<label class="tk-inline-field">
+						<span>前缀</span>
+						<input id="tk-5g-prefix" class="cbi-input-text" value="TK5G-" />
+					</label>
+					<label class="tk-inline-field">
+						<span>起始序号</span>
+						<input id="tk-5g-start" class="cbi-input-text" type="number" min="1" value="1" />
+					</label>
+					<label class="tk-inline-field">
+						<span>密码</span>
+						<input id="tk-5g-pass" class="cbi-input-text" placeholder="留空＝abc123456" />
+					</label>
+					<button type="button" class="cbi-button cbi-button-apply tk-band-btn" data-tk-act="wb-create-5g">创建 5G WiFi</button>
+				</div>
+			</div>
+		</div>
+		<div class="tk-verdict" data-wb-create-out></div>
+	</section>
+
+	<% if has_err then %>
+	<div class="tk-alert is-warn">
+		<div class="tk-alert-title">清单存在问题，暂不能部署</div>
+		<ul class="tk-alert-list">
+			<% for _, e in ipairs(err_list) do %>
+				<li><% if (e.line or 0) > 0 then %>第 <%=esc(e.line)%> 行：<% end %><%=esc(e.msg)%></li>
+			<% end %>
+		</ul>
+	</div>
+	<% end %>
+
+	<% if not has_lines then %>
+	<div class="tk-empty">
+		<svg viewBox="0 0 48 48" aria-hidden="true">
+			<rect x="7" y="10" width="34" height="28" rx="4" fill="none" stroke="currentColor" stroke-width="2.4"/>
+			<path d="M14 19h20M14 26h13" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+			<circle cx="36" cy="36" r="7" fill="currentColor" opacity=".14"/>
+			<path d="M33 36h6M36 33v6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+		</svg>
+		<h3>还没有线路</h3>
+		<p>用上面的「① 导入节点」和「② 创建 WiFi」即可开始；创建完成后这里会显示每条线路的在线状态与出口 IP。</p>
+		<% if deployed then %>
+		<div style="margin-top: 2rem; text-align: center;">
+			<button type="button" class="cbi-button cbi-button-remove" data-tk-act="rollback" style="font-size: 1.05em; padding: 0.6em 1.2em;">
+				拆除并恢复主 WiFi
+			</button>
+			<p style="margin-top: 0.75rem; font-size: 0.9em; color: var(--text-secondary, #666);">
+				清空线路后需点此拆除现有部署并恢复主 WiFi
+			</p>
+		</div>
+		<% end %>
+	</div>
+	<% else %>
+	<div class="tk-card tk-card-table">
+		<div class="tk-card-head">
+			<h3>线路表格</h3>
+			<span class="tk-card-meta">
+				共 <span data-tk-stat-total-meta><%=esc(#row_list)%></span> 条 · 已启用 <b data-tk-count-en>0</b> · 已绑定 <b data-tk-count-bound>0</b>
+			</span>
+		</div>
+
+		<!-- 工具条：左边是批量操作，右边（靠右对齐）去掉「检测全部线路」 -->
+		<div class="tk-toolbar">
+			<div class="tk-toolbar-left">
+				<button type="button" class="cbi-button tk-btn-sm" data-tk-act="auto-bind">自动绑定未绑定的行</button>
+				<button type="button" class="cbi-button tk-btn-sm" data-tk-act="enable-all">全部启用</button>
+				<button type="button" class="cbi-button tk-btn-sm" data-tk-act="disable-all">全部禁止</button>
+				<button type="button" class="cbi-button cbi-button-remove tk-btn-sm" data-tk-act="lines-clear">清空全部线路</button>
+				<span class="tk-dirty" data-tk-dirty hidden>有改动未部署</span>
+			</div>
+			<div class="tk-toolbar-right">
+				<button type="button" class="cbi-button cbi-button-apply tk-btn-sm" data-tk-act="deploy"
+					<% if not can_deploy then %>disabled<% end %>>保存并部署</button>
+				<button type="button" class="cbi-button cbi-button-remove tk-btn-sm" data-tk-act="rollback"
+					<% if (not deployed) or job_running then %>disabled<% end %>>回滚</button>
+			</div>
+		</div>
+
+		<p class="tk-hint">
+			<b>已启用/已禁止、绑定节点、删除</b>都是改完立即保存（刷新不会丢）；
+			<b>要真正生效到分流</b>，点一次「保存并部署」。
+			检测结果就看每行的 <b>线路</b> / <b>运营环境</b> 徽章，点徽章看具体原因。
+		</p>
+		<div class="tk-table-wrap">
+			<table class="tk-table" id="tk-bind-table">
+				<thead>
+					<tr>
+						<th class="tk-col-idx">#</th>
+						<th>SSID</th>
+						<th>频段</th>
+						<th>网段</th>
+						<th>端口</th>
+						<th>绑定节点</th>
+						<th class="tk-col-en">启用</th>
+						<th data-col="online">状态</th>
+						<th data-col="env">运营环境</th>
+						<th data-col="exit">出口 IP</th>
+						<th class="tk-col-act">操作</th>
+					</tr>
+				</thead>
+				<tbody id="tk-bind-tbody">
+					<% for _, r in ipairs(row_list) do %>
+					<tr data-row="<%=esc(r.idx)%>" data-ssid="<%=esc(r.ssid)%>">
+						<td class="tk-col-idx"><span class="tk-idx"><%=esc(r.idx)%></span></td>
+						<td>
+							<div class="tk-ssid"><%=esc(r.ssid)%></div>
+							<div class="tk-slug"><%=esc(r.slug)%></div>
+						</td>
+						<td><span class="tk-band"><%=esc(r.band_label or "2.4G")%></span></td>
+						<td>
+							<% if pool and #pool > 0 then %>
+								<select class="cbi-input-select tk-node-sel" data-bind-select="<%=esc(r.idx)%>"
+									<% if job_running then %>disabled<% end %>>
+									<option value="">— 未绑定 —</option>
+									<% for _, n in ipairs(pool) do %>
+										<option value="<%=esc(n.name)%>"<% if r.node_name == n.name then %> selected<% end %>><%=esc(n.name)%></option>
+									<% end %>
+								</select>
+								<% if r.node_name and r.node_name ~= "" then %>
+									<div class="tk-slug">节点列表<% if usage_warn and usage_warn[r.ssid] then %> · <%=esc(usage_warn[r.ssid])%><% end %></div>
+								<% else %>
+									<div class="tk-slug">未绑定</div>
+								<% end %>
+							<% else %>
+								<% if r.node_name and r.node_name ~= "" then %>
+									<div class="tk-ssid"><%=esc(r.node_name)%></div>
+									<div class="tk-slug">节点列表</div>
+								<% else %>
+									<div class="tk-ssid"><%=esc(r.node_server or "—")%></div>
+									<div class="tk-slug">直连链接</div>
+								<% end %>
+							<% end %>
+						</td>
+						<td><code class="tk-code"><%=esc(r.subnet)%></code></td>
+						<td><code class="tk-code"><%=esc(r.port)%></code></td>
+						<td class="tk-col-en">
+							<button type="button"
+								class="tk-en-btn <% if r.enabled ~= false then %>is-on<% else %>is-off<% end %>"
+								data-bind-toggle="<%=esc(r.idx)%>"
+								data-enabled="<% if r.enabled ~= false then %>1<% else %>0<% end %>"
+								title="点击切换：已启用 / 已禁止"
+								<% if job_running then %>disabled<% end %>><% if r.enabled ~= false then %>已启用<% else %>已禁止<% end %></button>
+						</td>
+						<td data-col="online" class="tk-muted">未检测</td>
+						<td data-col="env" class="tk-muted">未检测</td>
+						<td data-col="exit" class="tk-muted">未检测</td>
+						<td class="tk-col-act">
+							<button type="button" class="cbi-button tk-btn-sm tk-btn-check" data-line="<%=esc(r.idx)%>" <% if job_running then %>disabled<% end %>>检测</button>
+							<button type="button" class="cbi-button tk-btn-sm" data-bind-del="<%=esc(r.idx)%>">删除</button>
+						</td>
+					</tr>
+					<% end %>
+				</tbody>
+			</table>
+		</div>
+	</div>
+	<% end %>
+
+	<div class="tk-overlay" id="tk-overlay" aria-hidden="true">
+		<div class="tk-dialog" role="dialog" aria-modal="true" aria-labelledby="tk-overlay-title">
+			<h3 id="tk-overlay-title" data-tk-overlay-title>正在部署…</h3>
+			<p class="tk-dialog-msg" data-tk-overlay-msg>正在生成并应用配置。</p>
+			<div class="tk-progress"><i data-tk-progress></i></div>
+			<pre class="tk-log" data-tk-log></pre>
+			<div class="tk-dialog-actions">
+				<button type="button" class="cbi-button" data-tk-close>关闭</button>
+				<button type="button" class="cbi-button cbi-button-apply" data-tk-reload hidden>刷新状态</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="tk-overlay" id="tk-env-modal" aria-hidden="true">
+		<div class="tk-dialog" role="dialog" aria-modal="true">
+			<div data-tk-env-head></div>
+			<div data-tk-env-body></div>
+			<div class="tk-dialog-actions">
+				<button type="button" class="cbi-button" data-tk-env-close>关闭</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script src="<%=esc(resource)%>/tkproxy/app.js?v=<%=esc(ver or "0")%>"></script>
+
+<%+footer%>

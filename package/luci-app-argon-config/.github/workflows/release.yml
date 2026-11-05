@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'release-*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: '24.10.5'
+            format: ipk
+            image: ghcr.io/openwrt/sdk:x86-64-24.10.5
+          - version: '25.12.5'
+            format: apk
+            image: ghcr.io/openwrt/sdk:x86-64-25.12.5
+    name: OpenWrt ${{ matrix.version }} (${{ matrix.format }})
+    steps:
+      - uses: actions/checkout@v7
+      - name: Regression tests
+        run: |
+          python3 -m unittest discover -s tests -v
+      - name: Checkout theme dependency
+        uses: actions/checkout@v7
+        with:
+          repository: jerrykuku/luci-theme-argon
+          ref: 2565c3ca7c06253f68a2ea44d9ea00839ced1484
+          path: bin/luci-theme-argon
+      - name: Prepare
+        run: |
+          mkdir -p bin/luci-app-argon-config
+          cp Makefile bin/luci-app-argon-config/
+      - name: Docker Build
+        env:
+          SDK_IMAGE: ${{ matrix.image }}
+        run: |
+          docker pull "$SDK_IMAGE"
+          docker run --rm -u root \
+            -v "$GITHUB_WORKSPACE/bin:/builder/bin" \
+            -v "$GITHUB_WORKSPACE/.github/workflows:/builder/workflows:ro" \
+            "$SDK_IMAGE" /bin/sh /builder/workflows/build.sh
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: argon-config-${{ matrix.version }}-${{ matrix.format }}
+          path: bin/packages/*/*/*argon-config*.${{ matrix.format }}
+          if-no-files-found: error
+      - name: Upload Log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: buildlog-${{ matrix.version }}
+          path: bin/logs.tar.xz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: argon-config-*
+          merge-multiple: true
+          path: artifacts
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mapfile -t assets < <(find artifacts -type f \( -name '*.ipk' -o -name '*.apk' \))
+          test "${#assets[@]}" -gt 0
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+            --title "$GITHUB_REF_NAME" --notes "Release $GITHUB_REF_NAME"

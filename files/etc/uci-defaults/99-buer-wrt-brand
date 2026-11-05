@@ -1,0 +1,59 @@
+#!/bin/sh
+# Buer-Wrt 首次启动：品牌、管理地址、root 密码、无线默认密码
+[ -f /etc/config/system ] || exit 0
+uci -q get system.@system[0] >/dev/null || exit 0
+
+# ---------- 1. 品牌 ----------
+uci set system.@system[0].hostname='Buer-Wrt'
+uci set system.@system[0].description='Buer-Wrt'
+uci set system.@system[0].timezone='CST-8'
+uci set system.@system[0].zonename='Asia/Shanghai'
+uci -q set luci.main.lang='zh_cn' 2>/dev/null
+
+# ---------- 2. 管理地址 192.168.8.1 ----------
+if uci -q get network.lan >/dev/null; then
+	uci set network.lan.ipaddr='192.168.8.1'
+	uci set network.lan.netmask='255.255.255.0'
+	# DHCP 池跟着换网段（原来是 192.168.1.x）
+	uci -q set dhcp.lan.start='100'
+	uci -q set dhcp.lan.limit='150'
+	uci -q set dhcp.lan.leasetime='12h'
+	uci -q set dhcp.lan.dhcpv4='server'
+	uci commit network
+	uci -q commit dhcp
+fi
+
+# ---------- 3. root 密码 = password ----------
+# 用 busybox passwd 从 stdin 设置（root 无密码装不上 SSH，必须设）
+if command -v passwd >/dev/null 2>&1; then
+	printf 'password\npassword\n' | passwd root >/dev/null 2>&1
+fi
+
+# ---------- 4. 无线默认密码 12345678 ----------
+# 首次开机 /etc/config/wireless 可能还没生成，先生成
+if [ ! -f /etc/config/wireless ] && [ -x /bin/config_generate ]; then
+	/bin/config_generate >/dev/null 2>&1
+fi
+
+if [ -f /etc/config/wireless ]; then
+	_idx=0
+	for _r in radio0 radio1; do
+		uci -q get wireless."$_r" >/dev/null || continue
+		_sec="default_${_r}"
+		uci -q get wireless."$_sec" >/dev/null || continue
+		if [ "$_idx" = "0" ]; then
+			uci set wireless."$_sec".ssid='Buer-Wrt'
+		else
+			uci set wireless."$_sec".ssid='Buer-Wrt-5G'
+		fi
+		uci set wireless."$_sec".encryption='psk2'
+		uci set wireless."$_sec".key='12345678'
+		uci set wireless."$_sec".disabled='0'
+		_idx=$((_idx + 1))
+	done
+	uci commit wireless
+fi
+
+uci commit system 2>/dev/null
+uci -q commit luci 2>/dev/null
+exit 0

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'Makefile'
+      - '.github/workflows/**'
+      - 'tests/**'
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Regression tests
+        run: |
+          python3 -m unittest discover -s tests -v
+
+  build:
+    needs: test
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: '24.10.5'
+            format: ipk
+            image: ghcr.io/openwrt/sdk:x86-64-24.10.5
+          - version: '25.12.5'
+            format: apk
+            image: ghcr.io/openwrt/sdk:x86-64-25.12.5
+    name: OpenWrt ${{ matrix.version }} (${{ matrix.format }})
+    steps:
+      - uses: actions/checkout@v7
+      - name: Checkout theme dependency
+        uses: actions/checkout@v7
+        with:
+          repository: jerrykuku/luci-theme-argon
+          ref: 2565c3ca7c06253f68a2ea44d9ea00839ced1484
+          path: bin/luci-theme-argon
+      - name: Prepare
+        run: |
+          mkdir -p bin/luci-app-argon-config
+          cp Makefile bin/luci-app-argon-config/
+      - name: Docker Build
+        env:
+          SDK_IMAGE: ${{ matrix.image }}
+        run: |
+          docker pull "$SDK_IMAGE"
+          docker run --rm -u root \
+            -v "$GITHUB_WORKSPACE/bin:/builder/bin" \
+            -v "$GITHUB_WORKSPACE/.github/workflows:/builder/workflows:ro" \
+            "$SDK_IMAGE" /bin/sh /builder/workflows/build.sh
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: argon-config-${{ matrix.version }}-${{ matrix.format }}
+          path: bin/packages/*/*/*argon-config*.${{ matrix.format }}
+          if-no-files-found: error
+      - name: Upload Log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: buildlog-${{ matrix.version }}
+          path: bin/logs.tar.xz

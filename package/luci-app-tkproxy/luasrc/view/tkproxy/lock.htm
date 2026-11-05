@@ -1,0 +1,56 @@
+<%+header%>
+<%+tkproxy/esc%>
+<link rel="stylesheet" href="<%=esc(resource or "")%>/tkproxy/app.css?v=<%=esc(ver or "0")%>" />
+
+<div class="tk-lock-wrap">
+	<div class="tk-lock-card">
+		<div class="tk-lock-logo">TK</div>
+		<h1 class="tk-lock-title"><% if rebind then %>设备绑定校验未通过<% else %>多线路分流 · 需要授权<% end %></h1>
+		<p class="tk-lock-sub">
+			<% if rebind then %>
+				本机与云端绑定的机器不一致（一机一卡一码）。把下面的机器码发给客服解绑后再激活。
+			<% else %>
+				本插件为授权软件，激活后才能查看与使用多线路分流功能。
+			<% end %>
+		</p>
+
+		<form id="tk-lock-form" method="post" action="<%=esc(urlbase)%>/action">
+			<input type="hidden" name="token" value="<%=esc(token)%>" />
+			<input type="hidden" name="cmd" value="license_activate" />
+			<input type="hidden" name="from" value="lock" />
+			<input type="text" id="tk-lock-card" name="card" class="tk-lock-input"
+				placeholder="请输入卡密，形如 XXXX-XXXX-XXXX-XXXX-XXXX"
+				autocomplete="off" spellcheck="false" />
+			<button type="submit" id="tk-lock-btn" class="tk-lock-btn">激活并进入</button>
+		</form>
+
+		<div class="tk-lock-msg" id="tk-lock-msg"><%=esc(licmsg or "")%></div>
+
+		<div class="tk-lock-machine">
+			<span>本机机器码</span>
+			<code id="tk-lock-machine"><%=esc(machine or "读取中…")%></code>
+		</div>
+
+		<p class="tk-lock-foot">
+			激活后永久有效，仅限本机使用；更换路由器请先联系客服解绑。<br />
+			<span class="tk-lock-ver">页面版本 <%=esc(ver or "")%></span>
+		</p>
+	</div>
+</div>
+
+<script>
+/* 原生表单提交，不依赖 fetch；这里只补一个体验：回车即提交 */
+(function () {
+	var form = document.getElementById('tk-lock-form');
+	var inp = document.getElementById('tk-lock-card');
+	if (!form) { return; }
+	if (inp) {
+		inp.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter') { e.preventDefault(); form.submit(); }
+		});
+		inp.focus();
+	}
+})();
+</script>
+
+<%+footer%>

@@ -243,6 +243,7 @@ define Device/cmcc_xr30-nand
   DEVICE_MODEL := XR30 NAND
   DEVICE_VARIANT := (U-Boot mod)
   DEVICE_DTS := mt7981b-cmcc-xr30-nand
+  SUPPORTED_DEVICES := cmcc,xr30-nand cmcc,xr30
   DEVICE_DTS_DIR := ../dts
   DEVICE_PACKAGES := kmod-usb3
   UBINIZE_OPTS := -E 5

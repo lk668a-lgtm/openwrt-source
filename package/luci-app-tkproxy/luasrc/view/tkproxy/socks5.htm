@@ -1,0 +1,149 @@
+<%+header%>
+<%+tkproxy/esc%>
+<link rel="stylesheet" href="<%=esc(resource)%>/tkproxy/app.css?v=<%=esc(ver or "0")%>" />
+
+<%
+-- t_299f5f62：SOCKS5 独立分类页（从节点列表页的卡片迁出为完整页面）
+-- 复用节点池数据（env.nodes）与现有 import_nodes / delete_node 接口，后端无新接口
+local socks_nodes = {}
+for _, n in ipairs(nodes) do
+	if n.protocol == "socks" then socks_nodes[#socks_nodes + 1] = n end
+end
+local front_opts = {}
+for _, n in ipairs(nodes) do
+	if n.protocol ~= "socks" then front_opts[#front_opts + 1] = n.name end
+end
+%>
+
+<div class="tk-wrap" data-tk-page="nodes" data-tk-socks5-card
+	data-tk-base="<%=esc(urlbase)%>"
+	data-tk-token="<%=esc(token)%>"
+	data-tk-busy="<% if job_running then %>1<% else %>0<% end %>">
+
+	<div class="tk-hero">
+		<div class="tk-hero-main">
+			<div class="tk-eyebrow">多线路分流</div>
+			<h2 class="tk-title">SOCKS5 代理</h2>
+			<p class="tk-sub">SOCKS5 节点可以单独指定前置节点：有些 SOCKS5 直连不通，必须先经过一个节点才能到达。添加后可在「清单」或「编辑线路」页面用 @节点名 绑定。</p>
+		</div>
+		<div class="tk-hero-actions">
+			<a class="cbi-button" href="<%=esc(urlbase)%>/dashboard">返回概览</a>
+		</div>
+	</div>
+
+	<div class="tk-grid">
+		<section class="tk-card">
+			<!-- 授权信息条（与概览一致） -->
+			<div class="tk-licbar" data-license-card>
+				<div class="tk-licbar-left">
+					<span class="tk-licbar-item"><span class="tk-licbar-k">版本</span><b data-lic-ver>—</b></span>
+					<span class="tk-licbar-item"><span class="tk-licbar-k">授权</span><b data-lic-badge>读取中…</b></span>
+					<span class="tk-licbar-item"><span class="tk-licbar-k">授权期</span><b data-lic-exp>—</b></span>
+					<span class="tk-licbar-item tk-licbar-m"><span class="tk-licbar-k">机器码</span><code data-lic-machine>—</code></span>
+				</div>
+			</div>
+
+			<div class="tk-card-head">
+				<h3>添加 SOCKS5 节点</h3>
+				<span class="tk-card-meta">共 <%=esc(#socks_nodes)%> 个</span>
+			</div>
+
+			<div class="tk-field">
+				<label class="tk-label" for="tk-socks5-name">名称（可留空，留空用地址命名）</label>
+				<input id="tk-socks5-name" class="cbi-input-text" type="text" autocomplete="off" spellcheck="false" placeholder="socks5-1" />
+			</div>
+			<div class="tk-field">
+				<label class="tk-label" for="tk-socks5-addr">地址</label>
+				<input id="tk-socks5-addr" class="cbi-input-text" type="text" autocomplete="off" spellcheck="false"
+					placeholder="socks5://user:pass@1.2.3.4:1080 或 1.2.3.4:1080:用户名:密码" />
+				<div class="tk-help">支持 socks5:// 链接或老插件四段写法 host:端口:用户名:密码。</div>
+			</div>
+			<% if #front_opts == 0 and #nodes > 0 then %>
+			<p class="tk-hint">节点池里现在只有 SOCKS5 节点，配不了前置——先到「节点列表」导入一个普通节点再选。</p>
+			<% end %>
+			<div class="tk-field">
+				<label class="tk-label" for="tk-socks5-front">前置代理</label>
+				<div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+					<select id="tk-socks5-front" class="cbi-input-select" style="flex: 1; min-width: 200px;">
+						<option value="">直连（不用前置）</option>
+						<% for _, fname in ipairs(front_opts) do %>
+						<option value="<%=esc(fname)%>"><%=esc(fname)%></option>
+						<% end %>
+					</select>
+					<button type="button" class="cbi-button cbi-button-apply" data-tk-act="socks5-add">添加</button>
+				</div>
+				<div class="tk-help">前置只能从节点池里已有的普通节点里选（不支持叠加）；添加后可在「清单」或「编辑线路」页面用 @节点名 绑定。</div>
+			</div>
+			<div class="tk-verdict" data-tk-socks5-verdict>
+				<div class="tk-verdict-line is-idle">填好地址点「添加」，会加入节点池。</div>
+			</div>
+		</section>
+
+		<aside class="tk-card tk-card-side">
+			<h3>使用提示</h3>
+			<ul class="tk-hint-list">
+				<li>前置只支持一层：SOCKS5 的前置必须是普通节点，不能选另一个 SOCKS5 节点。</li>
+				<li>名称可留空，留空时用地址自动命名。</li>
+				<li>删除前必须先解除所有线路的引用。</li>
+				<li>普通节点（vless / vmess / trojan / ss）请到「节点列表」页导入。</li>
+			</ul>
+		</aside>
+	</div>
+
+	<% if #socks_nodes > 0 then %>
+	<div class="tk-card tk-card-table">
+		<div class="tk-card-head">
+			<h3>SOCKS5 节点</h3>
+			<span class="tk-card-meta">共 <%=esc(#socks_nodes)%> 个</span>
+		</div>
+		<div class="tk-table-wrap">
+			<table class="tk-table">
+				<thead>
+					<tr>
+						<th>名称</th>
+						<th>落地地址</th>
+						<th>前置</th>
+						<th>被使用</th>
+						<th class="tk-col-act">操作</th>
+					</tr>
+				</thead>
+				<tbody>
+					<% for _, n in ipairs(socks_nodes) do %>
+					<tr data-socks5-name="<%=esc(n.name)%>">
+						<td><strong><%=esc(n.name)%></strong></td>
+						<td class="tk-break"><%=esc(n.server)%>:<%=esc(n.port)%></td>
+						<td>
+							<% if n.front and n.front ~= "" then %>
+								<%=esc(n.front)%>
+							<% else %>
+								<span class="tk-muted">直连</span>
+							<% end %>
+						</td>
+						<td>
+							<% if #n.used_by > 0 then %>
+								第 <%=esc(table.concat(n.used_by, "、"))%> 行
+							<% else %>
+								<span class="tk-muted">未使用</span>
+							<% end %>
+						</td>
+						<td class="tk-col-act">
+							<button type="button" class="cbi-button tk-btn-sm cbi-button-remove"
+								data-tk-act="delete-node" data-tk-name="<%=esc(n.name)%>"
+								<% if #n.used_by > 0 then %>disabled title="解除引用后才能删除"<% end %>>删除</button>
+						</td>
+					</tr>
+					<% end %>
+				</tbody>
+			</table>
+		</div>
+	</div>
+	<% else %>
+	<div class="tk-card tk-card-table">
+		<p class="tk-hint" data-tk-socks5-empty>还没有 socks5 节点</p>
+	</div>
+	<% end %>
+</div>
+
+<script src="<%=esc(resource)%>/tkproxy/app.js?v=<%=esc(ver or "0")%>"></script>
+
+<%+footer%>

@@ -1,0 +1,134 @@
+<%+header%>
+<%+tkproxy/esc%>
+<link rel="stylesheet" href="<%=esc(resource)%>/tkproxy/app.css?v=<%=esc(ver or "0")%>" />
+
+<div class="tk-wrap" data-tk-page="nodes"
+	data-tk-base="<%=esc(urlbase)%>"
+	data-tk-token="<%=esc(token)%>"
+	data-tk-busy="<% if job_running then %>1<% else %>0<% end %>">
+
+	<div class="tk-hero">
+		<div class="tk-hero-main">
+			<div class="tk-eyebrow">节点列表</div>
+			<h2 class="tk-title">节点列表</h2>
+			<p class="tk-sub">导入节点后可在「清单」或「编辑线路」页面用 @节点名 引用，一个节点可被多条线路复用。</p>
+		</div>
+		<div class="tk-hero-actions">
+			<a class="cbi-button" href="<%=esc(urlbase)%>/dashboard">返回概览</a>
+		</div>
+	</div>
+
+	<div class="tk-grid">
+		<section class="tk-card">
+				<!-- 授权信息条（与概览一致） -->
+	<div class="tk-licbar" data-license-card>
+		<div class="tk-licbar-left">
+			<span class="tk-licbar-item"><span class="tk-licbar-k">版本</span><b data-lic-ver>—</b></span>
+			<span class="tk-licbar-item"><span class="tk-licbar-k">授权</span><b data-lic-badge>读取中…</b></span>
+			<span class="tk-licbar-item"><span class="tk-licbar-k">授权期</span><b data-lic-exp>—</b></span>
+			<span class="tk-licbar-item tk-licbar-m"><span class="tk-licbar-k">机器码</span><code data-lic-machine>—</code></span>
+		</div>
+	</div>
+
+<div class="tk-card-head">
+				<h3>导入节点</h3>
+			</div>
+
+			<div class="tk-field">
+				<label class="tk-label" for="tk-sub-url">订阅 URL（可选）</label>
+				<div style="display: flex; gap: 0.5rem;">
+					<input id="tk-sub-url" class="cbi-input-text" type="text" placeholder="https://example.com/sub?token=..."
+						autocomplete="off" spellcheck="false" style="flex: 1;" />
+					<button type="button" class="cbi-button" data-tk-act="fetch-sub">拉取</button>
+					<button type="button" class="cbi-button" data-tk-act="nodes-clear">清空全部节点</button>
+				</div>
+				<div class="tk-help">拉取后自动填入下方文本框；失败会给出原因。</div>
+			</div>
+
+			<div class="tk-field">
+				<label class="tk-label" for="tk-import-text">节点链接（每行一条）</label>
+				<textarea id="tk-import-text" class="cbi-input-text tk-textarea"
+					rows="8" spellcheck="false" autocomplete="off" autocapitalize="off"
+					placeholder="vless://...&#10;vmess://...&#10;trojan://...&#10;ss://...&#10;json:{...}"></textarea>
+				<div class="tk-help">支持 vless / vmess / trojan / ss / json: 格式；可选在行首加 「名称|」。</div>
+			</div>
+
+			<div class="tk-actions">
+				<button type="button" class="cbi-button cbi-button-apply" data-tk-act="import-nodes">导入</button>
+			</div>
+
+			<div class="tk-verdict" data-tk-verdict>
+				<div class="tk-verdict-line is-idle">粘贴节点链接后点「导入」，重复的链接会自动去重。</div>
+			</div>
+			<div class="tk-errors" data-tk-errors hidden></div>
+		</section>
+
+		<aside class="tk-card tk-card-side">
+			<h3>导入提示</h3>
+			<ul class="tk-hint-list">
+				<li>每行一条链接；空行和 # 开头的注释行会被忽略。</li>
+				<li>链接里的 #备注 会作为节点名称；没有备注时用 uuid 或域名前几位。</li>
+				<li>也可以手动指定名称：<code>名称|链接</code>。</li>
+				<li>订阅拉取用 wget，超时 30 秒；失败时检查 URL 和网络。</li>
+			</ul>
+		</aside>
+	</div>
+
+	<% if has_nodes then %>
+	<div class="tk-card tk-card-table">
+		<div class="tk-card-head">
+			<h3>节点列表</h3>
+			<span class="tk-card-meta">共 <%=esc(#nodes)%> 个节点</span>
+		</div>
+		<p class="tk-hint">删除前必须先解除所有线路的引用。</p>
+		<div class="tk-table-wrap">
+			<table class="tk-table">
+				<thead>
+					<tr>
+						<th>名称</th>
+						<th>协议</th>
+						<th>服务器</th>
+						<th>端口</th>
+						<th>被使用</th>
+						<th class="tk-col-act">操作</th>
+					</tr>
+				</thead>
+				<tbody>
+					<% for _, n in ipairs(nodes) do %>
+					<tr data-node-name="<%=esc(n.name)%>">
+						<td><strong><%=esc(n.name)%></strong></td>
+						<td><%=esc(n.protocol)%></td>
+						<td class="tk-break"><%=esc(n.server)%></td>
+						<td><%=esc(n.port)%></td>
+						<td>
+							<% if #n.used_by > 0 then %>
+								第 <%=esc(table.concat(n.used_by, "、"))%> 行
+							<% else %>
+								<span class="tk-muted">未使用</span>
+							<% end %>
+						</td>
+						<td class="tk-col-act">
+							<button type="button" class="cbi-button tk-btn-sm cbi-button-remove"
+								data-tk-act="delete-node" data-tk-name="<%=esc(n.name)%>"
+								<% if #n.used_by > 0 then %>disabled title="解除引用后才能删除"<% end %>>删除</button>
+						</td>
+					</tr>
+					<% end %>
+				</tbody>
+			</table>
+		</div>
+	</div>
+	<% end %>
+
+	<%#
+	SOCKS5 卡片已迁到独立分类页（admin/services/tkproxy/socks5），
+	这里只留一行提示链接，避免两个地方都能加（重复导入与维护分裂）。
+	#%>
+	<div class="tk-card tk-card-table">
+		<p class="tk-hint">SOCKS5 节点已独立成页：<a href="<%=esc(urlbase)%>/socks5">前往 SOCKS5 代理 页面管理</a>（可单独指定前置节点）。</p>
+	</div>
+</div>
+
+<script src="<%=esc(resource)%>/tkproxy/app.js?v=<%=esc(ver or "0")%>"></script>
+
+<%+footer%>

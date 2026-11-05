@@ -1,0 +1,18 @@
+# 统一换行符：仓库内文本一律 LF，二进制保持原样。
+# 不设这条时 Windows 上 core.autocrlf=true 会把 .sh/.lua 检出成 CRLF，
+# 拷到路由器会报 "not found" / 解析错。
+* text=auto eol=lf
+*.sh text eol=lf
+*.lua text eol=lf
+*.htm text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.ipk binary
+*.apk binary
+*.zip binary
+*.tgz binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.mp4 binary
+*.pptx binary

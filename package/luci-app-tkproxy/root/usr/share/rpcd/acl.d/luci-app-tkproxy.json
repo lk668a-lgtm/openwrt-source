@@ -1,0 +1,20 @@
+{
+	"luci-app-tkproxy": {
+		"description": "Grant access to the TK multi-line proxy manager",
+		"read": {
+			"uci": [ "tkproxy" ],
+			"file": {
+				"/etc/config/tkproxy": [ "read" ],
+				"/etc/tkproxy/*": [ "read" ],
+				"/tmp/tkproxy/*": [ "read" ]
+			}
+		},
+		"write": {
+			"uci": [ "tkproxy" ],
+			"file": {
+				"/etc/config/tkproxy": [ "write" ],
+				"/tmp/tkproxy/*": [ "write" ]
+			}
+		}
+	}
+}

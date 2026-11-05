@@ -1,0 +1,29 @@
+{
+	"admin/services/tkproxy": {
+		"title": "多线路分流",
+		"order": 61,
+		"action": {
+			"type": "firstchild"
+		}
+	},
+	"admin/services/tkproxy/dashboard": {
+		"title": "概览",
+		"order": 10,
+		"action": {
+			"type": "call",
+			"module": "luci.controller.tkproxy",
+			"function": "action_dashboard"
+		},
+		"leaf": true
+	},
+	"admin/services/tkproxy/nodes": {
+		"title": "节点列表",
+		"order": 20,
+		"action": {
+			"type": "call",
+			"module": "luci.controller.tkproxy",
+			"function": "action_nodes"
+		},
+		"leaf": true
+	}
+}
