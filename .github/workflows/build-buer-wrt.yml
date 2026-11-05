@@ -34,6 +34,12 @@ jobs:
         run: |
           cp configs/buer-wrt.config .config
           make defconfig
+          if ! grep -q "^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_xr30-nand=y" .config; then
+            echo "第一次没选中设备，按 profile 再生成一次"
+            sed -i '/^CONFIG_TARGET_PROFILE=/d' .config
+            echo 'CONFIG_TARGET_PROFILE="DEVICE_cmcc_xr30-nand"' >> .config
+            make defconfig
+          fi
           echo "=== 设备检查 ==="
           grep -E "CONFIG_TARGET_DEVICE|CONFIG_TARGET_mediatek" .config | head -20
           grep -q "^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_xr30-nand=y" .config \
