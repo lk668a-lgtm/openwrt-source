@@ -1,4 +1,15 @@
-* -text
-*.patch whitespace=-indent-with-non-tab,-space-before-tab,-tab-in-indent,-trailing-space
-*.dts text eol=lf
-*.dts[io] text eol=lf
+# 所有文本按 LF 入库，避免 Windows 工作树把 CRLF 带进固件（脚本会 syntax error）
+* text=auto eol=lf
+*.sh text eol=lf
+*.lua text eol=lf
+*.json text eol=lf
+*.htm text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.uc text eol=lf
+*.ut text eol=lf
+*.png binary
+*.jpg binary
+*.gz binary
+*.ipk binary
+*.apk binary
