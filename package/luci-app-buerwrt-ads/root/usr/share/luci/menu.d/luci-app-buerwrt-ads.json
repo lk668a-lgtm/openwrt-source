@@ -1,0 +1,20 @@
+{
+	"admin/services/buerwrtads": {
+		"title": "资源推荐",
+		"order": 65,
+		"action": {
+			"type": "call",
+			"module": "luci.controller.buerwrtads",
+			"function": "action_page"
+		},
+		"depends": {
+			"uci": {
+				"buerwrt": {
+					"ads": {
+						"enabled": "1"
+					}
+				}
+			}
+		}
+	}
+}

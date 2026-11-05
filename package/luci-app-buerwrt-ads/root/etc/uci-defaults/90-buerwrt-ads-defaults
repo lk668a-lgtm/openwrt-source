@@ -1,0 +1,16 @@
+#!/bin/sh
+# buerwrt-ads 出厂默认配置：只在用户没配过时写入，升级不覆盖用户设置。
+# enabled 默认 1；title/url 等文案字段预填，用户可在 /etc/config/buerwrt 直接改。
+# 段命名约定：config main 'ads'（主段，按名 ads 引用）+ config item 段若干。
+
+if ! uci -q get buerwrt.ads >/dev/null 2>&1; then
+	uci -q set buerwrt.ads=main
+	uci -q set buerwrt.ads.enabled='1'
+	uci -q set buerwrt.ads.title='TK 各种资源'
+	uci -q set buerwrt.ads.subtitle='精选 TIKTOK 相关资源与服务入口'
+	uci -q set buerwrt.ads.url='https://buerai.net'
+	uci -q set buerwrt.ads.open_in_new_tab='1'
+	uci -q commit buerwrt
+fi
+
+exit 0

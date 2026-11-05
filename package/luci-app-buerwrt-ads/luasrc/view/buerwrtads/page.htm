@@ -1,0 +1,81 @@
+<%+header%>
+<%+buerwrtads/esc%>
+<link rel="stylesheet" href="<%=esc(resource)%>/buerwrt-ads/ads.css?v=1.0.0" />
+
+<%
+	local m = main or {}
+	local list = items or {}
+	local target = m.open_in_new_tab and "_blank" or "_self"
+%>
+
+<div class="buads-wrap" data-buads-page="page"
+	data-buads-save="<%=esc(url("admin/services/buerwrtads/save"))%>"
+	data-buads-config="<%=esc(url("admin/services/buerwrtads/config"))%>">
+
+	<div class="buads-head">
+		<div class="buads-eyebrow">BUERWRT · 资源推荐</div>
+		<h2 class="buads-title">资源与工具入口</h2>
+		<p class="buads-sub">本页内容由固件内置配置提供，全部链接在本机渲染，不加载任何外部资源。</p>
+	</div>
+
+	<!-- 主卡片 -->
+	<div class="buads-hero">
+		<div class="buads-hero-icon" aria-hidden="true">
+			<svg viewBox="0 0 24 24" width="40" height="40" focusable="false">
+				<path fill="currentColor" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" opacity=".18"/>
+				<path fill="currentColor" d="M5 6.5 9.5 4v5zM14.5 4 19 6.5 14.5 9zM5 15.5 9.5 13v5zM14.5 13 19 15.5 14.5 18z"/>
+			</svg>
+		</div>
+		<div class="buads-hero-main">
+			<h3 class="buads-hero-title"><%=esc(m.title)%></h3>
+			<p class="buads-hero-sub"><%=esc(m.subtitle)%></p>
+			<div class="buads-hero-url"><code><%=esc(m.url)%></code></div>
+		</div>
+		<div class="buads-hero-actions">
+			<a class="buads-btn" href="<%=esc(m.url)%>"
+				target="<%=esc(target)%>"
+				rel="noopener noreferrer">前往 →</a>
+		</div>
+	</div>
+
+	<!-- 资源位 -->
+	<% if #list > 0 then %>
+	<div class="buads-grid">
+		<% for _, it in ipairs(list) do %>
+		<%
+			local it_target = it.open_in_new_tab and "_blank" or "_self"
+		%>
+		<a class="buads-cell" href="<%=esc(it.url)%>"
+			target="<%=esc(it_target)%>" rel="noopener noreferrer">
+			<div class="buads-cell-title">
+				<span class="buads-cell-dot" aria-hidden="true"></span>
+				<span><%=esc(it.title)%></span>
+			</div>
+			<% if it.desc ~= "" then %>
+			<div class="buads-cell-desc"><%=esc(it.desc)%></div>
+			<% end %>
+			<div class="buads-cell-url"><%=esc(it.url)%></div>
+		</a>
+		<% end %>
+	</div>
+	<% else %>
+	<div class="buads-empty">还没有配置资源位。编辑 /etc/config/buerwrt，加入 config item 段（title / desc / url）即可显示在这里。</div>
+	<% end %>
+
+	<!-- 开关：关闭后菜单项隐藏、卡片不再注入 -->
+	<div class="buads-card">
+		<div class="buads-card-row">
+			<div>
+				<div class="buads-card-k">显示「资源推荐」入口</div>
+				<div class="buads-card-d">关闭后，侧边栏菜单与概览页卡片都会消失（本页也不再可访问）。</div>
+			</div>
+			<button type="button" class="cbi-button cbi-button-apply" data-buads-toggle="1"
+				data-buads-enabled="<% if m.enabled then %>1<% else %>0<% end %>"><% if m.enabled then %>启用中<% else %>已关闭<% end %></button>
+			<span class="buads-out" data-buads-out></span>
+		</div>
+	</div>
+</div>
+
+<script src="<%=esc(resource)%>/buerwrt-ads/page.js?v=1.0.0"></script>
+
+<%+footer%>

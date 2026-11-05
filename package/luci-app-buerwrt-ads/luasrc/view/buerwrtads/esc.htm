@@ -1,0 +1,25 @@
+<%
+-- XSS 转义辅助：所有动态输出必须经 esc() 包裹后再进 HTML。
+-- 必须用 export() 把 esc 写进共享的 viewns，不能直接 `esc = fn`：
+-- LuCI 给每个模板 chunk 单独 setfenv，include() 只把父 env 当 scope 传下来，
+-- 直接赋值只留在本 chunk 的 env 里，父模板读不到，调用 esc() 就会报错。
+if not esc then
+	local base = pcdata
+	local fn = function(s)
+		if s == nil then return "" end
+		if type(base) == "function" then return base(s) or "" end
+		return (tostring(s):gsub("[&<>\"']", {
+			["&"] = "&#38;",
+			["<"] = "&#60;",
+			[">"] = "&#62;",
+			["\""] = "&#34;",
+			["'"] = "&#39;"
+		}))
+	end
+	if type(export) == "function" then
+		export("esc", fn)
+	else
+		esc = fn
+	end
+end
+%>

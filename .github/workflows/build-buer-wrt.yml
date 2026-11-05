@@ -45,7 +45,7 @@ jobs:
           grep -q "^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_xr30-nand=y" .config \
             || { echo "错误：没有选中 cmcc_xr30-nand，停止编译"; exit 1; }
           echo "=== 包检查 ==="
-          grep -E "CONFIG_PACKAGE_(xray-core|luci-app-tkproxy|luci-theme-argon|luci-app-argon-config|ip-full|luci-compat)=" .config \
+          grep -E "CONFIG_PACKAGE_(xray-core|luci-app-tkproxy|luci-app-buerwrt-ads|luci-theme-argon|luci-app-argon-config|ip-full|luci-compat)=" .config \
             || { echo "错误：关键包缺失"; exit 1; }
 
       - name: 下载源码包
