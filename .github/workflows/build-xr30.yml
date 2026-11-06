@@ -42,7 +42,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.variant }}" != "both" ]; then
             echo 'variants=["${{ inputs.variant }}"]' >> $GITHUB_OUTPUT
           else
-            echo 'variants=["minimal","full"]' >> $GITHUB_OUTPUT
+            echo 'variants=["full"]' >> $GITHUB_OUTPUT
           fi
 
   # 快车道：官方 ImageBuilder（预编译内核 + 包仓库）约 4 分钟出 itb。
@@ -153,8 +153,8 @@ jobs:
           mkdir -p openwrt/files
           cp -rv files/* openwrt/files/ || true
           cp -rv package/luci-app-tkproxy openwrt/package/
-          cp -rv package/luci-theme-argon openwrt/package/
-          cp -rv package/luci-app-argon-config openwrt/package/
+          # luci-theme-argon / luci-app-argon-config 不再单独入树：
+          # 插件包已内置主题；两份同名文件会让 package/install 报 check_data_file_clashes。
           cp -rv package/luci-app-buerwrt-ads openwrt/package/ || true
 
       - name: 更新 feeds 并安装
@@ -183,8 +183,9 @@ jobs:
           EOF
           if [ "${{ matrix.variant }}" = "full" ]; then
             cat >> .config <<'EOF'
-          CONFIG_PACKAGE_luci-theme-argon=y
-          CONFIG_PACKAGE_luci-app-argon-config=y
+          # 主题由 luci-app-tkproxy 自带（3.15.3 起合并了 Argon），
+          # 不能再选独立的 luci-theme-argon / luci-app-argon-config：
+          # 两者装同一批 /www/luci-static/argon/** → package/install 阶段 file clash。
           CONFIG_PACKAGE_luci-app-tkproxy=y
           EOF
           fi
@@ -194,7 +195,7 @@ jobs:
           grep -q 'CONFIG_TARGET_MULTI_PROFILE=y' .config && { echo "::error::MULTI_PROFILE 被打开"; exit 1; }
           if [ "${{ matrix.variant }}" = "full" ]; then
             grep -q 'CONFIG_PACKAGE_luci-app-tkproxy=y' .config || { echo "::error::插件没被选中"; exit 1; }
-            grep -q 'CONFIG_PACKAGE_luci-theme-argon=y' .config || { echo "::error::主题没被选中"; exit 1; }
+            grep -q 'CONFIG_PACKAGE_luci-theme-argon=y' .config && { echo "::error::不该再单独选主题包（会与插件自带的 Argon 冲突）"; exit 1; } || true
           fi
           echo "配置检查通过"
 
@@ -246,6 +247,8 @@ jobs:
           echo '```' >> $OUT
           tail -c 60000 $OUT > /tmp/err2.txt
           { echo "## ❌ 编译失败：${{ matrix.variant }}"; echo '```'; cat /tmp/err2.txt; echo '```'; } >> $GITHUB_STEP_SUMMARY
+          echo "===== 失败日志（stdout，匿名可见） ====="
+          cat /tmp/err2.txt | tail -60
           echo "::error::编译失败，详见 job summary"
 
       - name: 上传产物
