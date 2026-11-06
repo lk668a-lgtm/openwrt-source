@@ -19,6 +19,9 @@ on:
         type: choice
         options: [both, minimal, full]
 
+permissions:
+  contents: write
+
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_COMMIT: 0c4cd0f9920a420a2ac95b49c1b62130769c08ae
