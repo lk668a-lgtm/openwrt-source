@@ -38,8 +38,44 @@ jobs:
             echo 'variants=["minimal","full"]' >> $GITHUB_OUTPUT
           fi
 
+  # 3 分钟预检：只验证 DTS 能否编出 dtb。dtc 的错误在整包编译里要等 2 小时才暴露，
+  # 这里几分钟就能拦住（dts 里标签引用不存在、语法错、缺 include 都能查出来）。
+  dts-check:
+    runs-on: ubuntu-22.04
+    name: dts-check
+    steps:
+      - name: 检出构建仓
+        uses: actions/checkout@v4
+
+      - name: 拉取 immortalwrt 源码（只要 dts 目录）
+        run: |
+          set -e
+          git init src
+          cd src
+          git remote add origin $REPO_URL
+          git fetch --depth 1 origin $REPO_COMMIT
+          git checkout FETCH_HEAD -- target/linux/mediatek/dts include
+
+      - name: 用宿主 dtc 预编译 XR30 的 dtb
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq device-tree-compiler cpp
+          cp xr30-build/dts/*.dts src/target/linux/mediatek/dts/
+          cd src/target/linux/mediatek/dts
+          cpp -nostdinc -undef -D__DTS__ -x assembler-with-cpp \
+              -I../../../../../include -I. mt7981b-cmcc-xr30.dts -o /tmp/xr30.dts.pp
+          dtc -I dts -O dtb -o /tmp/xr30.dtb -i . /tmp/xr30.dts.pp 2> /tmp/dtc.err || {
+            echo "::error::DTS 编译失败"; cat /tmp/dtc.err; exit 1;
+          }
+          echo "dtb 编译成功：$(stat -c%s /tmp/xr30.dtb) 字节"
+          echo '--- 关键属性核对 ---'
+          fdtget /tmp/xr30.dtb / model
+          fdtget /tmp/xr30.dtb / compatible
+          fdtget /tmp/xr30.dtb /chosen bootargs-override
+
   build:
-    needs: prepare
+    needs: [prepare, dts-check]
     strategy:
       fail-fast: false
       matrix:
@@ -139,6 +175,12 @@ jobs:
             grep -q 'CONFIG_PACKAGE_luci-theme-argon=y' .config || { echo "::error::主题没被选中"; exit 1; }
           fi
           echo "配置检查通过"
+
+      - name: 缓存源码包
+        uses: actions/cache@v4
+        with:
+          path: openwrt/dl
+          key: dl-${{ hashFiles('openwrt/.config') }}-v1
 
       - name: 下载源码包
         run: |
