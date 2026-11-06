@@ -1,0 +1,152 @@
+name: BUER-WRT XR30
+
+# 目标：出 CMCC XR30（ubootmod / FIT .itb）固件，插件与主题内置。
+# 基线固定 immortalwrt@0c4cd0f9920a —— 与实机当前 r38135 完全同一提交，
+# 免得版本漂移把驱动/包版本带偏。
+
+on:
+  push:
+    branches: [buer-wrt]
+    paths:
+      - 'xr30-build/**'
+      - '.github/workflows/build-xr30.yml'
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: '要编译的变体'
+        required: true
+        default: 'both'
+        type: choice
+        options: [both, minimal, full]
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_COMMIT: 0c4cd0f9920a
+  TZ: Asia/Shanghai
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      variants: ${{ steps.m.outputs.variants }}
+    steps:
+      - id: m
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.variant }}" != "both" ]; then
+            echo 'variants=["${{ inputs.variant }}"]' >> $GITHUB_OUTPUT
+          else
+            echo 'variants=["minimal","full"]' >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.prepare.outputs.variants) }}
+    runs-on: ubuntu-22.04
+    name: build-${{ matrix.variant }}
+    steps:
+      - name: 检出构建仓
+        uses: actions/checkout@v4
+
+      - name: 安装编译依赖
+        run: |
+          sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext \
+            gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev \
+            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libssl-dev \
+            libtool lrzsz mkisofs msmtp nano ninja-build p7zip-full patch pkgconf python3 python3-pip \
+            python3-ply python3-docutils python3-pyelftools qemu-utils re2c rsync scons squashfs-tools \
+            subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+
+      - name: 拉取 immortalwrt 源码（锁定提交）
+        run: |
+          git clone --filter=blob:none $REPO_URL openwrt
+          cd openwrt
+          git fetch --depth 1 origin $REPO_COMMIT
+          git checkout $REPO_COMMIT
+          git log --oneline -1
+
+      - name: 注入 XR30 设备定义
+        run: |
+          cp xr30-build/dts/*.dts openwrt/target/linux/mediatek/dts/
+          python3 xr30-build/patch_device.py openwrt
+          grep -n "Device/cmcc_xr30" openwrt/target/linux/mediatek/image/filogic.mk
+
+      - name: 放入品牌文件与插件包
+        run: |
+          mkdir -p openwrt/files
+          cp -rv files/* openwrt/files/ || true
+          cp -rv package/luci-app-tkproxy openwrt/package/
+          cp -rv package/luci-theme-argon openwrt/package/
+          cp -rv package/luci-app-argon-config openwrt/package/
+          cp -rv package/luci-app-buerwrt-ads openwrt/package/ || true
+
+      - name: 更新 feeds 并安装
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 生成 .config
+        run: |
+          cd openwrt
+          cat > .config <<'EOF'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_xr30=y
+          CONFIG_TARGET_ROOTFS_SQUASHFS=y
+          CONFIG_TARGET_ROOTFS_PARTSIZE=104
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-base=y
+          CONFIG_PACKAGE_luci-compat=y
+          CONFIG_PACKAGE_jsonfilter=y
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_ip-full=y
+          CONFIG_PACKAGE_nftables=y
+          CONFIG_PACKAGE_dnsmasq-full=y
+          EOF
+          if [ "${{ matrix.variant }}" = "full" ]; then
+            cat >> .config <<'EOF'
+          CONFIG_PACKAGE_luci-theme-argon=y
+          CONFIG_PACKAGE_luci-app-argon-config=y
+          CONFIG_PACKAGE_luci-app-tkproxy=y
+          EOF
+          fi
+          make defconfig
+          echo "=== 机型断言 ==="
+          grep -q 'CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_xr30=y' .config || { echo "::error::没选中 cmcc_xr30"; exit 1; }
+          grep -q 'CONFIG_TARGET_MULTI_PROFILE=y' .config && { echo "::error::MULTI_PROFILE 被打开"; exit 1; }
+          if [ "${{ matrix.variant }}" = "full" ]; then
+            grep -q 'CONFIG_PACKAGE_luci-app-tkproxy=y' .config || { echo "::error::插件没被选中"; exit 1; }
+            grep -q 'CONFIG_PACKAGE_luci-theme-argon=y' .config || { echo "::error::主题没被选中"; exit 1; }
+          fi
+          echo "配置检查通过"
+
+      - name: 下载源码包
+        run: |
+          cd openwrt
+          make download -j8 || make download -j1 V=s
+
+      - name: 编译
+        run: |
+          cd openwrt
+          make -j$(nproc) || make -j1 V=s
+
+      - name: 校验产物（必须是 XR30 的 itb）
+        run: |
+          ls -l openwrt/bin/targets/mediatek/filogic/
+          test -f openwrt/bin/targets/mediatek/filogic/immortalwrt-mediatek-filogic-cmcc_xr30-squashfs-sysupgrade.itb \
+            || { echo "::error::没有产出 cmcc_xr30 的 sysupgrade.itb"; exit 1; }
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: bwerwrt-xr30-${{ matrix.variant }}
+          path: |
+            openwrt/bin/targets/mediatek/filogic/*cmcc_xr30*
+            openwrt/bin/targets/mediatek/filogic/profiles.json
+          if-no-files-found: error

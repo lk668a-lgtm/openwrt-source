@@ -1,9 +1,9 @@
 name: build-buer-wrt
 
+# 已停用自动触发：改为只支持手动（旧流程编译的是 shiyu1314 源码、产物是 .bin，
+# 与本机 U-Boot mod 需要的 .itb 不匹配，见 build-xr30.yml）
 on:
   workflow_dispatch:
-  push:
-    branches: [ buer-wrt ]
 
 jobs:
   build:
