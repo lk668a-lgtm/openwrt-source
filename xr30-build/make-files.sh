@@ -47,4 +47,10 @@ exit 0
 EOF
 chmod +x "$OUT/etc/uci-defaults/99-buer-wrt-imagebuilder"
 
+
+# 插件依赖 /etc/config/tkproxy 存在（不存在时 uci set 会报 Entry not found，
+# 首启脚本就会写不进默认更新源）——包里没带这个文件，这里补一个空配置。
+mkdir -p "$OUT/etc/config"
+[ -f "$OUT/etc/config/tkproxy" ] || : > "$OUT/etc/config/tkproxy"
+
 echo "FILES 目录已生成：$(find "$OUT" -type f | wc -l) 个文件"
