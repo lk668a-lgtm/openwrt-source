@@ -87,6 +87,58 @@ jobs:
           curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues -d @/tmp/p.json | head -c 200
 
+  # 快车道：用官方 ImageBuilder（预编译内核 + 包仓库）10 分钟出 itb。
+  # 机型用 cmcc_rax3000m —— 实机那个能刷的 itb 就是它改名来的，FIT/布局完全一致；
+  # 差别只是板名和 LED 引脚。用来快速验证「插件内置 + 能刷能起」。
+  imagebuilder:
+    runs-on: ubuntu-22.04
+    name: imagebuilder-fast
+    steps:
+      - name: 检出构建仓
+        uses: actions/checkout@v4
+
+      - name: 下载并解压 ImageBuilder
+        run: |
+          set -e
+          URL=https://downloads.immortalwrt.org/releases/25.12.2/targets/mediatek/filogic/immortalwrt-imagebuilder-25.12.2-mediatek-filogic.Linux-x86_64.tar.zst
+          curl -sSL -o ib.tar.zst "$URL"
+          ls -lh ib.tar.zst
+          sudo apt-get update -qq && sudo apt-get install -y -qq zstd
+          tar --use-compress-program=unzstd -xf ib.tar.zst
+          ls -d immortalwrt-imagebuilder-*
+
+      - name: 组装内置文件树
+        run: |
+          set -e
+          sh xr30-build/make-files.sh /tmp/files-install
+          find /tmp/files-install -name "*.json" | head -5
+          ls /tmp/files-install
+
+      - name: 构建镜像（profile=cmcc_rax3000m）
+        run: |
+          set -e
+          cd immortalwrt-imagebuilder-*
+          make image PROFILE=cmcc_rax3000m \
+            PACKAGES="luci luci-compat luci-app-tkproxy luci-theme-argon" \
+            FILES=/tmp/files-install 2>&1 | tail -40 || true
+          ls -l bin/targets/mediatek/filogic/ | head -20
+
+      - name: 校验产物
+        run: |
+          set -e
+          cd immortalwrt-imagebuilder-*
+          ITB=$(ls bin/targets/mediatek/filogic/*cmcc_rax3000m*squashfs-sysupgrade.itb 2>/dev/null | head -1)
+          if [ -z "$ITB" ]; then echo "::error::没有产出 itb"; ls -l bin/targets/mediatek/filogic/; exit 1; fi
+          echo "产物：$ITB ($(stat -c%s "$ITB") 字节)"
+          mkdir -p /tmp/x && cp "$ITB" /tmp/x/xr30-fast.itb
+
+      - name: 上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: bwerwrt-xr30-fast-itb
+          path: /tmp/x/xr30-fast.itb
+          if-no-files-found: error
+
   build:
     # 预检仅作参考，不阻塞正式编译（预检自身依赖宿主环境，失败不代表 DTS 有问题）
     needs: prepare
