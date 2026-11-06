@@ -64,7 +64,7 @@ jobs:
           cp xr30-build/dts/*.dts src/target/linux/mediatek/dts/
           cd src/target/linux/mediatek/dts
           cpp -nostdinc -undef -D__DTS__ -x assembler-with-cpp \
-              -I../../../../../include -I. mt7981b-cmcc-xr30.dts -o /tmp/xr30.dts.pp
+              -I../../../../include -I. mt7981b-cmcc-xr30.dts -o /tmp/xr30.dts.pp
           dtc -I dts -O dtb -o /tmp/xr30.dtb -i . /tmp/xr30.dts.pp 2> /tmp/dtc.err || {
             echo "::error::DTS 编译失败"; cat /tmp/dtc.err; exit 1;
           }
@@ -73,6 +73,19 @@ jobs:
           fdtget /tmp/xr30.dtb / model
           fdtget /tmp/xr30.dtb / compatible
           fdtget /tmp/xr30.dtb /chosen bootargs-override
+
+      - name: 预检失败时报告（贴 issue）
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          { echo '```'; echo '== cpp/dtc 输出 =='; cat /tmp/dtc.err 2>/dev/null | tail -40;
+            echo '== 预处理产物尾部 =='; tail -20 /tmp/xr30.dts.pp 2>/dev/null;
+            echo '```'; } > /tmp/e.txt
+          jq -n --arg t "dts-check 失败 @ ${{ github.sha }}" --rawfile b /tmp/e.txt '{title:$t, body:$b}' > /tmp/p.json
+          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues -d @/tmp/p.json | head -c 200
 
   build:
     needs: [prepare, dts-check]
