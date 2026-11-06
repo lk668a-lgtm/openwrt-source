@@ -1,0 +1,25 @@
+#!/bin/sh
+# tkproxy 3.14 起内嵌 Argon 主题：确保升级上来的机器也能切到 Argon，且默认浅色。
+# 只在「没选过 / 还是出厂 bootstrap」时才动，用户自己选过别的主题就不覆盖。
+
+[ -f /etc/config/argon ] || touch /etc/config/argon
+
+# 1) 主题本体：luci.themes.Argon 注册 + 当前主题切到 argon
+_cur="$(uci -q get luci.main.mediaurlbase)"
+if [ -z "$_cur" ] || [ "$_cur" = "/luci-static/bootstrap" ]; then
+	uci -q set luci.themes.Argon='/luci-static/argon'
+	uci -q set luci.main.mediaurlbase='/luci-static/argon'
+	uci -q commit luci
+fi
+
+# 2) 默认浅色：只在字段缺失时补 normal（light），不覆盖用户已选
+if ! uci -q get 'argon.@global[0]' >/dev/null 2>&1; then
+	uci -q add argon global >/dev/null
+fi
+_mode="$(uci -q get 'argon.@global[0].mode')"
+if [ -z "$_mode" ]; then
+	uci -q set 'argon.@global[0].mode=normal'
+	uci -q commit argon
+fi
+
+exit 0

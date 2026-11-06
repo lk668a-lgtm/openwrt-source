@@ -1307,7 +1307,14 @@ function M.job_start(name, cmdline)
 		cmdline, shq(rc_tmp), shq(lockpath), shq(logpath), shq(logpath), shq(logpath), shq(logpath),
 		shq(rc_tmp), shq(job_rc(name)), shq(job_rc(name))
 	)
-	local cmd = "nohup sh -c " .. shq(wrapper) .. " >/dev/null 2>&1 & echo $! >" .. shq(job_pid(name))
+	-- 25.12 的 busybox 里没有 nohup（applet 被裁），原来这条命令会让作业静默不启动，
+	-- 表现是「点部署什么都没发生、AP/桥都不变」。改成把 wrapper 落成脚本文件，
+	-- 有 setsid 用 setsid，没有就退回直接后台跑。
+	local jobsh = M.RUN_DIR .. "/job-" .. name .. ".sh"
+	fs.writefile(jobsh, "#!/bin/sh\n" .. wrapper .. "\n")
+	fs.chmod(jobsh, "0700") -- fs.chmod 要字符串模式，传数字会报 bad argument
+	local cmd = "(command -v setsid >/dev/null 2>&1 && setsid sh " .. shq(jobsh) ..
+		" || sh " .. shq(jobsh) .. ") >/dev/null 2>&1 & echo $! >" .. shq(job_pid(name))
 	M.exec(cmd)
 	return true
 end

@@ -1781,7 +1781,18 @@ STOP=15
 # 用 USE_PROCD=1 却没调 procd_run 会出两个问题：procd 反复 respawn 出一堆
 # /etc/init.d/tkproxy 实例（实测堆到 13 个），且 stop 永远等不到实例退出，
 # 表现为 opkg remove / init stop 卡死十几分钟。
-USE_PROCD=0
+# 关键：不能用 USE_PROCD=0。rc.common 只判断这个变量「非空」，"0" 也算非空，
+# 于是会走 procd 分支（rc_procd start_service），而本脚本没有注册 procd 实例，
+# 结果是 start_service 永远不被调用 —— 重启后 DNS 桥不启动、看门狗不驻留。
+# 实测：重启后 AP/桥/xray 都回来了，唯独客户端 DNS 全断。
+# 改为「不声明 USE_PROCD」+ 自己实现 start/stop/restart，走 rc.common 的传统路径。
+start() { start_service "$@"; }
+stop() { stop_service "$@"; }
+restart() {
+	stop_service "$@"
+	sleep 2
+	start_service "$@"
+}
 
 NFT_FILE=/etc/tkproxy/tkproxy.nft
 CFG=/etc/tkproxy/xray.json
@@ -1815,48 +1826,20 @@ port_up() {
 }
 
 watchdog() {
-	# 开机守护：ruleset 可能在启动后被后续 fw4/网络事件清掉，结果 WiFi 能用但流量直连，
-	# 对 TikTok 环境等于裸奔污染。这里每 60s 检查一次，表丢了就重新加载。
+	# 守护进程独立成脚本 + setsid 启动：原来的 `( ... ) &` 和 procd 服务在同一
+	# 进程组，服务 restart 时被连带杀掉，重启后 DNS 桥就再没人拉起来。
 	if [ -s /var/run/tkproxy-watchdog.pid ] && kill -0 "$(cat /var/run/tkproxy-watchdog.pid 2>/dev/null)" 2>/dev/null; then
 		return 0
 	fi
-	(
-		_fixed=0
-		while [ -f "$NFT_FILE" ]; do
-			sleep 60
-			# 维护中（stop/卸载/升级）：不要再把服务拉起来，否则会与 stop 互斗导致卡死
-			if [ -f /tmp/tkproxy/.paused ]; then
-				continue
-			fi
-			# 部署进行中不要插手，apply.sh 自己会重建规则
-			if pgrep -f 'apply\.sh' >/dev/null 2>&1; then
-				continue
-			fi
-			if ! nft list table inet tkproxy >/dev/null 2>&1; then
-				logger -t tkproxy "看门狗：inet tkproxy 表丢失，重新加载"
-				if nft -f "$NFT_FILE"; then
-					_fixed=$((_fixed + 1))
-					logger -t tkproxy "看门狗：规则已恢复（累计 $_fixed 次）"
-				else
-					logger -t tkproxy "看门狗：规则重新加载失败"
-				fi
-			fi
-			# 每天一次静默核验：只写日志，任何失败都不影响本地授权（永久授权不联网也能用）
-			_tk_now=$(date +%s)
-			_tk_last=$(cat /tmp/tkproxy/license-daily.last 2>/dev/null)
-			case "$_tk_last" in ''|*[!0-9]*) _tk_last=0 ;; esac
-			if [ $((_tk_now - _tk_last)) -gt 86400 ]; then
-				echo "$_tk_now" > /tmp/tkproxy/license-daily.last
-				( sh /usr/libexec/tkproxy/license.sh dailycheck >>/tmp/tkproxy/license-daily.log 2>&1 ) &
-			fi
-			if [ ! -s /var/run/xray.pid ] || ! kill -0 "$(cat /var/run/xray.pid 2>/dev/null)" 2>/dev/null; then
-				logger -t tkproxy "看门狗：xray 已退出，重启服务"
-				# 用 restart：procd 认为服务还在时 start 是空操作
-				( sleep 1; /etc/init.d/tkproxy restart >/dev/null 2>&1 ) &
-				exit 0
-			fi
-		done
-	) &
+	if [ ! -x /usr/libexec/tkproxy/watchdog.sh ]; then
+		logger -t tkproxy "watchdog.sh 缺失（或没执行权限），跳过守护"
+		return 0
+	fi
+	if command -v setsid >/dev/null 2>&1; then
+		setsid sh /usr/libexec/tkproxy/watchdog.sh >/dev/null 2>&1 &
+	else
+		sh /usr/libexec/tkproxy/watchdog.sh >/dev/null 2>&1 &
+	fi
 	echo $! > /var/run/tkproxy-watchdog.pid
 }
 
@@ -1868,6 +1851,16 @@ boot() {
 		if ! nft list table inet tkproxy >/dev/null 2>&1; then
 			logger -t tkproxy "boot: 60 秒后仍无 inet tkproxy 表，重试一次"
 			/etc/init.d/tkproxy restart >/dev/null 2>&1
+		fi
+	) &
+	# DNS 桥兜底：start 在 procd 认为服务已运行时是空操作，桥必须单独再拉一次，
+	# 否则重启后客户端能连 WiFi 但所有域名解析不了（网页打不开）。
+	(
+		sleep 45
+		if ip -4 addr show 2>/dev/null | grep -q "10\.11\.[0-9]*\.1/" && \
+		   ! netstat -lnup 2>/dev/null | grep -q ":5301"; then
+			logger -t tkproxy "boot: 45s 后 DNS 桥未监听，兜底拉起"
+			start_dnsbridge
 		fi
 	) &
 	# 开箱自检：开机 90s 后异步跑一次（有 24h 节流，不是每次开机都真跑）
@@ -1893,6 +1886,14 @@ bootcheck_kick() {
 
 start_dnsbridge() {
 	[ -f /usr/libexec/tkproxy/dnsbridge.lua ] || return 0
+	# 开机阶段网桥可能还没拿到 10.11.x.1（netifd 还在建桥），先等最多 40 秒，
+	# 否则绑定全失败、客户端 DNS 全断（表现为 WiFi 连上、网页打不开）。
+	_w=0
+	while [ "$_w" -lt 40 ]; do
+		if ip -4 addr show 2>/dev/null | grep -q "10\.11\.[0-9]*\.1/"; then break; fi
+		_w=$((_w + 1))
+		sleep 1
+	done
 	_pid=$(cat /var/run/tkproxy-dnsbridge.pid 2>/dev/null || true)
 	if [ -n "$_pid" ] && [ -d "/proc/$_pid" ]; then
 		case "$(tr '\0' ' ' < "/proc/$_pid/cmdline" 2>/dev/null || true)" in
@@ -1918,6 +1919,8 @@ start_dnsbridge() {
 	# 起没起来必须验一次：进程在且端口在才算成功，否则写日志（部署日志里能看到）
 	_pid=$(cat /var/run/tkproxy-dnsbridge.pid 2>/dev/null || true)
 	if [ -n "$_pid" ] && [ -d "/proc/$_pid" ]; then
+		netstat -lnup 2>/dev/null | grep -q ":5301" || \
+			logger -t tkproxy "DNS 桥进程在但 5301 未监听（见 dnsbridge.log）"
 		return 0
 	fi
 	logger -t tkproxy "DNS 桥启动失败（见 /tmp/tkproxy/dnsbridge.log）"
@@ -1926,11 +1929,23 @@ start_dnsbridge() {
 
 start_service() {
 	logger -t tkproxy "init: start_service 被调用（参数：${1:-none}）"
+	# 串行化：开机时 boot()、rc.local 兜底、看门狗重启可能同时进来，
+	# 各自都会「先杀旧 xray 再起新的」，结果留下两个 xray 实例抢同一批端口。
+	_LOCK=/var/lock/tkproxy-start.lock
+	if ! mkdir "$_LOCK" 2>/dev/null; then
+		logger -t tkproxy "init: 已有 start 在进行，跳过本次"
+		return 0
+	fi
+	trap 'rmdir "$_LOCK" 2>/dev/null' EXIT INT TERM
 	# 清掉维护标记，让看门狗恢复值守
 	rm -f /tmp/tkproxy/.paused 2>/dev/null
 	policy_down
 	policy_up || { logger -t tkproxy "策略路由添加失败"; return 1; }
 	watchdog
+
+	# DNS 桥：只依赖网桥 IP，不依赖 xray 是否就绪，开机必须拉起来。
+	# 历史 bug：函数有定义但没有任何调用点 → 重启后桥不启动，客户端能连 WiFi 但网页全打不开。
+	start_dnsbridge
 
 	# 解析 xray 二进制路径
 	XRAY=$(command -v xray 2>/dev/null || echo /usr/bin/xray)
@@ -2149,6 +2164,14 @@ INITEOF
 # 这里给 apply.sh 运行时补一份同逻辑实现。
 start_dnsbridge() {
 	[ -f /usr/libexec/tkproxy/dnsbridge.lua ] || return 0
+	# 开机阶段网桥可能还没拿到 10.11.x.1（netifd 还在建桥），先等最多 40 秒，
+	# 否则绑定全失败、客户端 DNS 全断（表现为 WiFi 连上、网页打不开）。
+	_w=0
+	while [ "$_w" -lt 40 ]; do
+		if ip -4 addr show 2>/dev/null | grep -q "10\.11\.[0-9]*\.1/"; then break; fi
+		_w=$((_w + 1))
+		sleep 1
+	done
 	_pid=$(cat /var/run/tkproxy-dnsbridge.pid 2>/dev/null || true)
 	if [ -n "$_pid" ] && [ -d "/proc/$_pid" ]; then
 		case "$(tr '\0' ' ' < "/proc/$_pid/cmdline" 2>/dev/null || true)" in

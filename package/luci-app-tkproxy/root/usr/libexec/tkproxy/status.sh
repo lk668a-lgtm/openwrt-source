@@ -371,12 +371,12 @@ ISOEOF2
 						if ip netns exec "$_ns_iso" ip addr add "${_test_ip}/24" dev "$_peer_iso" >/dev/null 2>&1 \
 							&& ip netns exec "$_ns_iso" ip route add default via "$_first_gw" >/dev/null 2>&1; then
 							# 尝试从第一个网段访问第二个网关（应该失败）
-							if ip netns exec "$_ns_iso" timeout 2 nc -z "$_second_gw" 80 >/dev/null 2>&1; then
+							if ip netns exec "$_ns_iso" lua /usr/libexec/tkproxy/portprobe.lua "$_second_gw" 80 2000 >/dev/null 2>&1; then
 								inter_iface_isolation=false
 								_iso_note="FAIL: 从 $_first_subnet 可访问 $_second_gw（隔离失效）"
 							else
 								# 再尝试从第一个网段访问第一网关的第二线路 tproxy 端口（应该失败）
-								if ip netns exec "$_ns_iso" timeout 2 nc -z "$_first_gw" "$_second_port" >/dev/null 2>&1; then
+								if ip netns exec "$_ns_iso" lua /usr/libexec/tkproxy/portprobe.lua "$_first_gw" "$_second_port" 2000 >/dev/null 2>&1; then
 									inter_iface_isolation=false
 									_iso_note="FAIL: 从 $_first_subnet 可访问 $_first_gw:$_second_port（串线）"
 								else

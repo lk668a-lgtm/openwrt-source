@@ -3,10 +3,6 @@
 # enabled 默认 1；title/url 等文案字段预填，用户可在 /etc/config/buerwrt 直接改。
 # 段命名约定：config main 'ads'（主段，按名 ads 引用）+ config item 段若干。
 
-# 注意：这个版本的 uci 在 /etc/config/buerwrt 不存在时，set 会直接返回
-# "Entry not found"（不会自动建文件），必须先 touch 出来。
-[ -f /etc/config/buerwrt ] || touch /etc/config/buerwrt
-
 if ! uci -q get buerwrt.ads >/dev/null 2>&1; then
 	uci -q set buerwrt.ads=main
 	uci -q set buerwrt.ads.enabled='1'
