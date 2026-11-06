@@ -22,6 +22,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_COMMIT: 0c4cd0f9920a420a2ac95b49c1b62130769c08ae
@@ -41,58 +45,9 @@ jobs:
             echo 'variants=["minimal","full"]' >> $GITHUB_OUTPUT
           fi
 
-  # 3 分钟预检：只验证 DTS 能否编出 dtb。dtc 的错误在整包编译里要等 2 小时才暴露，
-  # 这里几分钟就能拦住（dts 里标签引用不存在、语法错、缺 include 都能查出来）。
-  dts-check:
-    runs-on: ubuntu-22.04
-    name: dts-check
-    steps:
-      - name: 检出构建仓
-        uses: actions/checkout@v4
-
-      - name: 拉取 immortalwrt 源码（只要 dts 目录）
-        run: |
-          set -e
-          git init src
-          cd src
-          git remote add origin $REPO_URL
-          git fetch --depth 1 origin $REPO_COMMIT
-          git checkout FETCH_HEAD -- target/linux/mediatek/dts include
-
-      - name: 用宿主 dtc 预编译 XR30 的 dtb
-        run: |
-          set -e
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq device-tree-compiler cpp
-          cp xr30-build/dts/*.dts src/target/linux/mediatek/dts/
-          cd src/target/linux/mediatek/dts
-          cpp -nostdinc -undef -D__DTS__ -x assembler-with-cpp \
-              -I../../../../include -I. mt7981b-cmcc-xr30.dts -o /tmp/xr30.dts.pp
-          dtc -I dts -O dtb -o /tmp/xr30.dtb -i . /tmp/xr30.dts.pp 2> /tmp/dtc.err || {
-            echo "::error::DTS 编译失败"; cat /tmp/dtc.err; exit 1;
-          }
-          echo "dtb 编译成功：$(stat -c%s /tmp/xr30.dtb) 字节"
-          echo '--- 关键属性核对 ---'
-          fdtget /tmp/xr30.dtb / model
-          fdtget /tmp/xr30.dtb / compatible
-          fdtget /tmp/xr30.dtb /chosen bootargs-override
-
-      - name: 预检失败时报告（贴 issue）
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set +e
-          { echo '```'; echo '== cpp/dtc 输出 =='; cat /tmp/dtc.err 2>/dev/null | tail -40;
-            echo '== 预处理产物尾部 =='; tail -20 /tmp/xr30.dts.pp 2>/dev/null;
-            echo '```'; } > /tmp/e.txt
-          jq -n --arg t "dts-check 失败 @ ${{ github.sha }}" --rawfile b /tmp/e.txt '{title:$t, body:$b}' > /tmp/p.json
-          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues -d @/tmp/p.json | head -c 200
-
-  # 快车道：用官方 ImageBuilder（预编译内核 + 包仓库）10 分钟出 itb。
-  # 机型用 cmcc_rax3000m —— 实机那个能刷的 itb 就是它改名来的，FIT/布局完全一致；
-  # 差别只是板名和 LED 引脚。用来快速验证「插件内置 + 能刷能起」。
+  # 快车道：官方 ImageBuilder（预编译内核 + 包仓库）约 4 分钟出 itb。
+  # 机型用 cmcc_rax3000m —— 实机能刷的 itb 就是它改名来的，FIT/布局一致，
+  # 差别只在板名与 LED 引脚；用来快速验证「插件内置 + 能刷能起」。
   imagebuilder:
     runs-on: ubuntu-22.04
     name: imagebuilder-fast
@@ -105,48 +60,23 @@ jobs:
           set -e
           URL=https://downloads.immortalwrt.org/releases/25.12.2/targets/mediatek/filogic/immortalwrt-imagebuilder-25.12.2-mediatek-filogic.Linux-x86_64.tar.zst
           curl -sSL -o ib.tar.zst "$URL"
-          ls -lh ib.tar.zst
           sudo apt-get update -qq && sudo apt-get install -y -qq zstd
           tar --use-compress-program=unzstd -xf ib.tar.zst
-          ls -d immortalwrt-imagebuilder-*
 
       - name: 组装内置文件树
         run: |
           set -e
           sh xr30-build/make-files.sh /tmp/files-install
-          find /tmp/files-install -name "*.json" | head -5
-          ls /tmp/files-install
+          echo "文件数：$(find /tmp/files-install -type f | wc -l)"
+          test -f /tmp/files-install/usr/libexec/tkproxy/watchdog.sh || { echo "::error::插件里没有 watchdog.sh"; exit 1; }
 
-      - name: 构建镜像（profile=cmcc_rax3000m）
+      - name: 构建镜像
         run: |
           set -e
           cd immortalwrt-imagebuilder-*
-          make image PROFILE=cmcc_rax3000m \
-            PACKAGES="luci luci-compat" \
-            FILES=/tmp/files-install > /tmp/ib-build.log 2>&1 || true
-          tail -30 /tmp/ib-build.log
-          ls -l bin/targets/mediatek/filogic/ | head -20
-
-      - name: 失败时报告
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set +e
-          { echo '```'; tail -60 /tmp/ib-build.log 2>/dev/null; echo '```';
-            echo '---- bin 目录 ----'; echo '```'; ls -lR immortalwrt-imagebuilder-*/bin/targets/mediatek/filogic 2>/dev/null | head -40; echo '```'; } > /tmp/e.txt
-          jq -n --arg t "imagebuilder 失败 @ ${{ github.sha }}" --rawfile b /tmp/e.txt '{title:$t, body:$b}' > /tmp/p.json
-          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues -d @/tmp/p.json | head -c 200
-
-      - name: 校验产物
-        run: |
-          set -e
-          cd immortalwrt-imagebuilder-*
-          ITB=$(ls bin/targets/mediatek/filogic/*cmcc_rax3000m*squashfs-sysupgrade.itb 2>/dev/null | head -1)
-          if [ -z "$ITB" ]; then echo "::error::没有产出 itb"; ls -l bin/targets/mediatek/filogic/; exit 1; fi
-          echo "产物：$ITB ($(stat -c%s "$ITB") 字节)"
-          mkdir -p /tmp/x && cp "$ITB" /tmp/x/xr30-fast.itb
+          make image PROFILE=cmcc_rax3000m PACKAGES="luci luci-compat" FILES=/tmp/files-install > /tmp/ib.log 2>&1 || { tail -40 /tmp/ib.log; exit 1; }
+          tail -15 /tmp/ib.log
+          ls -l bin/targets/mediatek/filogic/*.itb
 
       - name: 发布到 Release（公开可下载）
         env:
@@ -155,21 +85,15 @@ jobs:
           set -e
           cd immortalwrt-imagebuilder-*
           ITB=$(ls bin/targets/mediatek/filogic/*cmcc_rax3000m*squashfs-sysupgrade.itb | head -1)
-          TS=$(date +%Y%m%d-%H%M)
+          TS=$(date +%Y%m%d-%H%M%S)
           TAG="fast-$TS"
           REL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/releases \
-            -d "{\"tag_name\":\"$TAG\",\"name\":\"BUER-WRT XR30 快车道 $TS\",\"body\":\"ImageBuilder 产物（profile cmcc_rax3000m + 插件内置）。sha=${{ github.sha }}\"}")
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"BUER-WRT XR30 快车道 $TS\",\"body\":\"ImageBuilder 产物，profile cmcc_rax3000m，插件 3.15.3 + Argon 内置。sha=${{ github.sha }}\"}")
           UP=$(echo "$REL" | jq -r .upload_url | sed 's/{?name,label}//')
+          case "$UP" in http*) ;; *) echo "::error::建 release 失败：$(echo "$REL" | jq -r .message)"; exit 1 ;; esac
           curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
             --data-binary @"$ITB" "$UP?name=buer-wrt-xr30-fast-$TS.itb" | jq -r '.browser_download_url // .message'
-
-      - name: 上传
-        uses: actions/upload-artifact@v4
-        with:
-          name: bwerwrt-xr30-fast-itb
-          path: /tmp/x/xr30-fast.itb
-          if-no-files-found: error
 
   build:
     # 预检仅作参考，不阻塞正式编译（预检自身依赖宿主环境，失败不代表 DTS 有问题）
@@ -297,10 +221,8 @@ jobs:
             || { echo "::error::没有产出 cmcc_xr30 的 sysupgrade.itb"; exit 1; }
 
 
-      - name: 失败自诊断（把日志贴到 issue）
+      - name: 失败自诊断（写进 job summary）
         if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set +e
           OUT=/tmp/err.txt
@@ -323,10 +245,8 @@ jobs:
           fi
           echo '```' >> $OUT
           tail -c 60000 $OUT > /tmp/err2.txt
-          jq -n --arg t "CI 失败：${{ matrix.variant }} @ ${{ github.sha }}" --rawfile b /tmp/err2.txt \
-            '{title:$t, body:$b}' > /tmp/payload.json
-          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues -d @/tmp/payload.json | head -c 300
+          { echo "## ❌ 编译失败：${{ matrix.variant }}"; echo '```'; cat /tmp/err2.txt; echo '```'; } >> $GITHUB_STEP_SUMMARY
+          echo "::error::编译失败，详见 job summary"
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
