@@ -148,13 +148,45 @@ jobs:
       - name: 编译
         run: |
           cd openwrt
-          make -j$(nproc) || make -j1 V=s
+          make -j$(nproc)
 
       - name: 校验产物（必须是 XR30 的 itb）
         run: |
           ls -l openwrt/bin/targets/mediatek/filogic/
           test -f openwrt/bin/targets/mediatek/filogic/immortalwrt-mediatek-filogic-cmcc_xr30-squashfs-sysupgrade.itb \
             || { echo "::error::没有产出 cmcc_xr30 的 sysupgrade.itb"; exit 1; }
+
+
+      - name: 失败自诊断（把日志贴到 issue）
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          OUT=/tmp/err.txt
+          : > $OUT
+          echo "### ${{ matrix.variant }} 变体失败" >> $OUT
+          echo "" >> $OUT
+          echo '```' >> $OUT
+          # OpenWrt 的失败原因一般在 logs/ 下
+          grep -rlE "\*\*\* \[.*\] Error|ERROR:|Error [0-9]|No rule to make|undefined reference" openwrt/logs 2>/dev/null | head -5 > /tmp/files.txt
+          while read -r f; do
+            echo "== $f ==" >> $OUT
+            tail -n 60 "$f" >> $OUT
+          done < /tmp/files.txt
+          if [ ! -s /tmp/files.txt ]; then
+            echo "== 未在 logs/ 命中关键字，附最近修改的日志 ==" >> $OUT
+            ls -t openwrt/logs/*/*.txt 2>/dev/null | head -3 | while read -r f; do
+              echo "== $f ==" >> $OUT
+              tail -n 40 "$f" >> $OUT
+            done
+          fi
+          echo '```' >> $OUT
+          tail -c 60000 $OUT > /tmp/err2.txt
+          jq -n --arg t "CI 失败：${{ matrix.variant }} @ ${{ github.sha }}" --rawfile b /tmp/err2.txt \
+            '{title:$t, body:$b}' > /tmp/payload.json
+          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues -d @/tmp/payload.json | head -c 300
 
       - name: 上传产物
         uses: actions/upload-artifact@v4

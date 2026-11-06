@@ -52,21 +52,15 @@
 	gpio-leds {
 		compatible = "gpio-leds";
 
-		green_led: led-0 {
+		/* XR30 只有两盏灯：GPIO34 状态灯（运行常亮）、GPIO35 白灯 */
+		status_led: led-status {
 			function = LED_FUNCTION_STATUS;
-			color = <LED_COLOR_ID_GREEN>;
-			gpios = <&pio 9 GPIO_ACTIVE_LOW>;
+			gpios = <&pio 34 GPIO_ACTIVE_LOW>;
 		};
 
-		led-1 {
+		white_led: led-white {
 			function = LED_FUNCTION_STATUS;
-			color = <LED_COLOR_ID_BLUE>;
-			gpios = <&pio 12 GPIO_ACTIVE_LOW>;
-		};
-
-		red_led: led-2 {
-			function = LED_FUNCTION_STATUS;
-			color = <LED_COLOR_ID_RED>;
+			color = <LED_COLOR_ID_WHITE>;
 			gpios = <&pio 35 GPIO_ACTIVE_LOW>;
 		};
 	};
