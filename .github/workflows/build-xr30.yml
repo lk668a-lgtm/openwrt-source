@@ -145,6 +145,22 @@ jobs:
           echo "产物：$ITB ($(stat -c%s "$ITB") 字节)"
           mkdir -p /tmp/x && cp "$ITB" /tmp/x/xr30-fast.itb
 
+      - name: 发布到 Release（公开可下载）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cd immortalwrt-imagebuilder-*
+          ITB=$(ls bin/targets/mediatek/filogic/*cmcc_rax3000m*squashfs-sysupgrade.itb | head -1)
+          TS=$(date +%Y%m%d-%H%M)
+          TAG="fast-$TS"
+          REL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/releases \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"BUER-WRT XR30 快车道 $TS\",\"body\":\"ImageBuilder 产物（profile cmcc_rax3000m + 插件内置）。sha=${{ github.sha }}\"}")
+          UP=$(echo "$REL" | jq -r .upload_url | sed 's/{?name,label}//')
+          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
+            --data-binary @"$ITB" "$UP?name=buer-wrt-xr30-fast-$TS.itb" | jq -r '.browser_download_url // .message'
+
       - name: 上传
         uses: actions/upload-artifact@v4
         with:
