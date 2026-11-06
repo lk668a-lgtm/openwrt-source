@@ -21,7 +21,7 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_COMMIT: 0c4cd0f9920a
+  REPO_COMMIT: 0c4cd0f9920a420a2ac95b49c1b62130769c08ae
   TZ: Asia/Shanghai
 
 jobs:
@@ -64,11 +64,25 @@ jobs:
 
       - name: 拉取 immortalwrt 源码（锁定提交）
         run: |
-          git clone --filter=blob:none $REPO_URL openwrt
+          # 注意：git fetch 只认完整 40 位 SHA，短哈希会报
+          # "couldn't find remote ref"，第一次编译就栽在这。
+          set -e
+          git init openwrt
           cd openwrt
-          git fetch --depth 1 origin $REPO_COMMIT
-          git checkout $REPO_COMMIT
-          git log --oneline -1
+          git remote add origin $REPO_URL
+          if git fetch --depth 1 origin $REPO_COMMIT; then
+            git checkout FETCH_HEAD
+          else
+            echo "按 SHA 拉取失败，退回 blobless 全量索引"
+            rm -rf .git
+            cd ..
+            rm -rf openwrt
+            git clone --filter=blob:none --no-checkout $REPO_URL openwrt
+            cd openwrt
+            git checkout $REPO_COMMIT
+          fi
+          echo "实际提交：$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$REPO_COMMIT" || { echo "::error::提交号不一致"; exit 1; }
 
       - name: 注入 XR30 设备定义
         run: |
