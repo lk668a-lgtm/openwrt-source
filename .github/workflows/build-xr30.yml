@@ -269,3 +269,47 @@ jobs:
             openwrt/bin/targets/mediatek/filogic/*cmcc_xr30*
             openwrt/bin/targets/mediatek/filogic/profiles.json
           if-no-files-found: error
+
+      # 正式版也要能公开下载：artifact 需要登录，客户拿不到。
+      # 打成 Release（tag: full-<时间戳>），和快车道一致，免登录直接下。
+      - name: 发布到 Release（正式版）
+        if: matrix.variant == 'full'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TS=$(date -u +%Y%m%d-%H%M%S)
+          TAG="full-${TS}"
+          cd openwrt/bin/targets/mediatek/filogic
+          ITB=$(ls *cmcc_xr30*sysupgrade.itb 2>/dev/null | head -1 || true)
+          [ -n "$ITB" ] || { echo "没找到 cmcc_xr30 sysupgrade.itb"; exit 1; }
+          SHA=$(sha256sum "$ITB" | awk '{print $1}')
+          SIZE=$(stat -c %s "$ITB")
+          echo "产物：$ITB  $SIZE 字节  sha256=$SHA"
+          {
+            echo "## BUER-WRT XR30 正式版"
+            echo ""
+            echo "- 机型：cmcc_xr30（源码编译，板名/LED 正确）"
+            echo "- 插件：3.15.11（含本轮 10 项修复）"
+            echo "- 文件：\`$ITB\`"
+            echo "- 大小：$SIZE 字节"
+            echo "- sha256：\`$SHA\`"
+            echo "- commit：${{ github.sha }}"
+            echo ""
+            echo "### 刷机方式"
+            echo "1. 进 U-Boot 网页（设备断电→按住 reset 上电→浏览器开 192.168.1.1）"
+            echo "2. 上传这个 .itb，等 3-5 分钟自动重启"
+            echo "3. 后台 http://192.168.8.1  root/password"
+            echo "4. WiFi：Buer-Wrt / Buer-Wrt-5G（密码 12345678）"
+            echo "5. 服务 → 多线路分流 → 输卡密激活 → 导入节点 → 建 WiFi → 部署"
+          } > /tmp/notes.md
+          RES=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"BUER-WRT XR30 正式版 $TS\",\"body\":\"$(sed ':a;N;$!ba;s/\n/\\n/g' /tmp/notes.md | sed 's/"/\\"/g')\"}")
+          UPLOAD=$(echo "$RES" | python3 -c "import sys,json;print(json.load(sys.stdin).get('upload_url','').split('{')[0])")
+          [ -n "$UPLOAD" ] || { echo "$RES"; exit 1; }
+          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/octet-stream" --data-binary @"$ITB" \
+            "$UPLOAD?name=$ITB"
+          echo "已发布：https://github.com/${{ github.repository }}/releases/tag/$TAG"
