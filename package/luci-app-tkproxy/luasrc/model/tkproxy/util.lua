@@ -774,7 +774,22 @@ end
 function M.add_nodes(new_nodes)
 	return with_lock(function()
 		local pool = M.nodes()
+		-- 节点名是绑定/删除的唯一键（线路用 @名字 引用、删除按名字整条移除）：
+		-- 同名但链接不同必须拦住，否则会出现「绑的是哪个？」和「删一个连带删掉另一个」。
+		local byname = {}
+		for _, n in ipairs(pool) do byname[n.name or ""] = n end
 		for _, n in ipairs(new_nodes or {}) do
+			local prev = byname[n.name or ""]
+			if prev and prev.link ~= n.link then
+				local base, k = n.name, 1
+				local nn
+				repeat
+					k = k + 1
+					nn = base .. "-" .. k
+				until not byname[nn]
+				n.name = nn
+			end
+			byname[n.name] = n
 			pool[#pool + 1] = n
 		end
 		pool = M.dedup_nodes(pool)

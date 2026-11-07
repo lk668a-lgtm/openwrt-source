@@ -429,22 +429,46 @@
 	 *   第二次点击：整页刷新，用来看到执行后的最新状态
 	 * 执行成功后按钮文案自动变成「刷新页面」，避免用户不知道该点哪。
 	 */
+	/* 两段式确认：第一次调用返回 false（只把按钮改成“再点一次…”），
+	   5 秒内再按一次才返回 true 放行；超时自动复原。
+	   之前的实现忽略了 armText，所有删除/清空都是「点一次就执行」，
+	   客户误点一下就把 WiFi 或节点删了 —— 必改。 */
 	function armConfirm(btn, opts) {
 		opts = opts || {};
-		if (btn.__tkRefresh) {           // 第二次：刷新
-			window.location.reload();
-			return false;
+		/* 没给 armText 的调用点（创建 WiFi、一键修复、校验授权、升级…）不是破坏性操作，
+		   保持原来的行为：第一次点击直接执行，只把按钮文案改成 doneText 提示刷新。 */
+		if (!opts.armText) {
+			if (btn.__tkBusy) { return false; }
+			btn.__tkBusy = true;
+			setTimeout(function () {
+				btn.textContent = opts.doneText || '刷新页面';
+				btn.classList.add('tk-step-fresh');
+				btn.__tkBusy = false;
+			}, opts.doneDelay || 900);
+			return true;
 		}
-		btn.__tkRefresh = true;
-		var doneText = opts.doneText || '刷新页面';
-		// 执行通常几百毫秒到几秒；等它跑起来再改文案，别让用户以为没点动
-		setTimeout(function () {
-			if (!btn.__tkRefresh) { return; }
-			btn.textContent = doneText;
-			btn.className = (btn.className || '') + ' tk-step-fresh';
-			btn.disabled = false;
-		}, opts.doneDelay || 900);
-		return true;                      // 第一次：直接放行去执行
+		/* 破坏性操作（删除/清空/回滚）：两段式确认。第一次只把按钮改成
+		   “再点一次…”，5 秒内再按一次才放行；超时自动复原。
+		   之前的实现忽略 armText，所有删除都是「点一次就执行」，
+		   客户误点一下就把 WiFi 或节点删了 —— 必改。 */
+		if (btn.__tkArmed) {
+			btn.__tkArmed = false;
+			if (btn.__tkArmT) { clearTimeout(btn.__tkArmT); btn.__tkArmT = null; }
+			btn.classList.remove('tk-step-fresh');
+			if (opts.restoreText) { btn.textContent = opts.restoreText; }
+			return true;                  // 第二次点击：放行执行
+		}
+		btn.__tkArmed = true;
+		btn.__tkRestore = opts.restoreText || btn.textContent;
+		btn.textContent = opts.armText;
+		btn.classList.add('tk-step-fresh');
+		btn.__tkArmT = setTimeout(function () {
+			btn.__tkArmed = false;
+			btn.__tkArmT = null;
+			btn.classList.remove('tk-step-fresh');
+			btn.textContent = btn.__tkRestore;
+		}, opts.armTimeout || 5000);
+		return false;                     // 第一次点击：等确认
 	}
 
 	/* 执行完把工作区滚到表格（创建/删除后立刻看到结果） */
