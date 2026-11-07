@@ -70,8 +70,20 @@ local function validate_wifi_password(pw)
 end
 
 local function ensure_conf_file()
-	if not fs.stat(M.CONF_FILE) then
-		fs.writefile(M.CONF_FILE, "config tkproxy 'main'\n\toption updated_at '0'\n")
+	local st = fs.stat(M.CONF_FILE)
+	if not st then
+		fs.writefile(M.CONF_FILE, "config tkproxy 'main'\n	option updated_at '0'\n")
+	else
+		-- 文件存在但为空 / 没有 main 段（固件没带模板、被截断）时必须补上，
+		-- 否则 uci set 报 Entry not found，表现为「导入显示成功但节点和线路全丢」。
+		local body = fs.readfile(M.CONF_FILE) or ""
+		if not body:find("config tkproxy", 1, true) then
+			if body ~= "" then
+				pcall(fs.writefile, M.CONF_FILE .. ".bak", body)
+			end
+			local head = (body ~= "" and (body:sub(-1) ~= "\n") and (body .. "\n") or body) or ""
+			fs.writefile(M.CONF_FILE, head .. "config tkproxy 'main'\n	option updated_at '0'\n")
+		end
 	end
 	-- 清单里有节点链接（含账号/密码），每次访问都强制收紧到 0600
 	local ok, ret = pcall(fs.chmod, M.CONF_FILE, 384) -- 0600

@@ -1,0 +1,2 @@
+config tkproxy 'main'
+	option updated_at '0'
