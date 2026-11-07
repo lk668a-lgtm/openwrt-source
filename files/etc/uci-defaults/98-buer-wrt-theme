@@ -4,10 +4,10 @@
 # 字段依据（取自 vendor 进本仓库的主题源码 packages-vendor/luci-theme-argon/，版本 3.1.2）：
 # - 主题名：luci.themes.Argon=/luci-static/argon
 #   （root/etc/uci-defaults/30_luci-theme-argon 中主题自己就这样注册）
-# - 深色模式：argon.@global[0].mode='dark'，值域 normal|light|dark
-#   （ucode/template/themes/argon/head.ut 第 92-94 行：只认 normal/dark/light；
+# - 深色模式：argon.@global[0].mode='normal'，值域 normal|light|normal
+#   （ucode/template/themes/argon/head.ut 第 92-94 行：只认 normal/normal/light；
 #    root/usr/libexec/rpcd/luci.argon_appearance 的 set 也只接受这三个值并写回此字段）
-#   注意：没有 luci.main.darkmode 这个字段——那是老版 argon 的写法，3.x 不支持。
+#   注意：没有 luci.main.normalmode 这个字段——那是老版 argon 的写法，3.x 不支持。
 #
 # 本脚本只在首次开机（uci-defaults）时跑一次；用户之后的修改不会被覆盖。
 
@@ -23,20 +23,21 @@ if ! uci -q get luci.themes.Argon >/dev/null; then
 	uci set luci.themes.Argon='/luci-static/argon'
 fi
 
-# 3) 默认深色模式：写 /etc/config/argon 的 mode 字段。
+# 3) 默认浅色模式（normal）：写 /etc/config/argon 的 mode 字段。
 #    argon 配置文件由主题包的 30_luci-theme-argon 创建（99- 排在其后，时序保证
 #    节与默认值已就位；若没有则自己补出 @global[0] 节兜底）。
-#    只在「字段缺失或仍是主题默认 normal」时才写 dark：
-#    sysupgrade 保配置升级后 uci-defaults 会重放，用户已改成 light/dark 的
-#    选择不能被覆盖；全新刷机时是 normal，落到 dark。
+#    只在「字段缺失或仍是主题默认 normal」时才写 normal：
+#    sysupgrade 保配置升级后 uci-defaults 会重放，用户已改成 light/normal 的
+#    选择不能被覆盖；全新刷机时是 normal，落到 normal。
 if ! uci -q get argon.@global[0] >/dev/null; then
 	touch /etc/config/argon
 	uci -q add argon global >/dev/null
 fi
-current_mode="$(uci -q get argon.@global[0].mode)"
-if [ -z "$current_mode" ] || [ "$current_mode" = "normal" ]; then
-	uci -q set argon.@global[0].mode='dark'
-fi
+# 首次开机强制浅色（normal）。不能只在字段为空时设：
+# 主题自带的 30_luci-theme-argon 会先把 mode 写成 dark，98 号排在其后，
+# 若再判断「非空就跳过」，结果永远是深色（真机实测就是这样）。
+uci -q set argon.@global[0].mode='normal'
+uci -q set argon.@global[0].dark_primary_mode='auto' 2>/dev/null || true
 uci -q commit argon
 
 uci -q commit luci

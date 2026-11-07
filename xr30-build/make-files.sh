@@ -29,6 +29,18 @@ if [ -d "$ROOT/package/luci-theme-argon" ]; then
   put_ucode  "$ROOT/package/luci-theme-argon"
 fi
 
+# 预置 init：不预置的话要等第一次「保存并部署」才生成，重启无自启
+mkdir -p "$OUT/etc/init.d"
+if [ -f "$ROOT/xr30-build/init-tkproxy.sh" ]; then
+  cp "$ROOT/xr30-build/init-tkproxy.sh" "$OUT/etc/init.d/tkproxy"
+  chmod +x "$OUT/etc/init.d/tkproxy"
+fi
+
+# 所有脚本必须可执行（ImageBuilder 的 FILES 不会自动加 x 位，
+# 实测 watchdog.sh 落成 644 → init 里 [ -x ] 判断失败 → 守护进程不启动）
+find "$OUT" -type f \( -name "*.sh" -o -name "*.lua" \) -exec chmod +x {} + 2>/dev/null || true
+chmod +x "$OUT"/etc/init.d/* 2>/dev/null || true
+
 # 品牌 / 首启脚本 / apk 公钥
 [ -d "$ROOT/files" ] && cp -a "$ROOT/files/." "$OUT/"
 
