@@ -9,6 +9,10 @@ on:
     branches: [buer-wrt]
     paths:
       - 'xr30-build/**'
+      - 'package/luci-app-tkproxy/**'
+      - 'package/luci-theme-argon/**'
+      - 'package/luci-app-buerwrt-ads/**'
+      - 'files/**'
       - '.github/workflows/build-xr30.yml'
   workflow_dispatch:
     inputs:
