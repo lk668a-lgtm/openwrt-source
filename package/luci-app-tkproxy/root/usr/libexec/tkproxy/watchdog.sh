@@ -17,6 +17,18 @@ NFT_FILE=/etc/tkproxy/tkproxy.nft
 CONF_DIR=/etc/tkproxy
 LOG_DIR=/tmp/tkproxy
 
+# 单实例保护：init/apply/手动都可能各起一个，多个守护会同时 ifup 打架
+_pidf=/var/run/tkproxy-watchdog.pid
+if [ -s "$_pidf" ]; then
+	_oldpid=$(cat "$_pidf" 2>/dev/null)
+	if [ -n "$_oldpid" ] && [ "$_oldpid" != "$$" ] && [ -d "/proc/$_oldpid" ]; then
+		case "$(tr '\0' ' ' < "/proc/$_oldpid/cmdline" 2>/dev/null || true)" in
+			*watchdog.sh*) exit 0 ;;
+		esac
+	fi
+fi
+echo $$ > "$_pidf"
+
 start_dnsbridge() {
 	[ -f /usr/libexec/tkproxy/dnsbridge.lua ] || return 0
 	_pid=$(cat /var/run/tkproxy-dnsbridge.pid 2>/dev/null || true)
@@ -48,7 +60,29 @@ start_dnsbridge() {
 	logger -t tkproxy "守护：DNS 桥启动失败（见 $LOG_DIR/dnsbridge.log）"
 }
 
+# 线路接口自愈：开机时多个桥并发拉起，netifd 偶发 DEVICE_CLAIM_FAILED（up=false，
+# 重试几次就能成功）。没有 10.11.N.1 网关 → 对应 WiFi 连得上但上不了网。
+heal_ifaces() {
+	command -v ifstatus >/dev/null 2>&1 || return 0
+	for _i in 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+		ifstatus "tkp$_i" >/dev/null 2>&1 || continue
+		_u=$(ifstatus "tkp$_i" 2>/dev/null | jsonfilter -e '@.up' 2>/dev/null)
+		[ "$_u" = "true" ] && continue
+		logger -t tkproxy "守护：tkp$_i 未启动（up=$_u），执行 ifup"
+		ifup "tkp$_i" >/dev/null 2>&1
+	done
+}
+
 _fixed=0
+# 开机头 3 分钟：每 10 秒拉一次，抢在客户拿手机之前把 30 个网关全拉起来
+# （netifd 并发建桥会抢设备失败，隔几秒重试就成）
+_boot=0
+while [ "$_boot" -lt 18 ]; do
+	_boot=$((_boot + 1))
+	heal_ifaces
+	sleep 10
+done
+
 # 常驻：不能写 while [ -f "$NFT_FILE" ]。
 # 开机时规则文件还没生成（要等第一次部署），那样循环会立刻退出，
 # 之后部署完也没人再拉起守护进程 —— 真机实测：部署成功但 watchdog 不在。
@@ -68,6 +102,10 @@ while true; do
 			start_dnsbridge
 		fi
 	fi
+
+	# 1.5) 线路接口：开机偶发 tkp01/02/03/05 等几个桥 up=false（netifd 报
+	# DEVICE_CLAIM_FAILED，重试可成功），没有 10.11.N.1 网关 → 对应 WiFi 上不了网
+	heal_ifaces
 
 	# 2) nft 表
 	if ! nft list table inet tkproxy >/dev/null 2>&1; then
