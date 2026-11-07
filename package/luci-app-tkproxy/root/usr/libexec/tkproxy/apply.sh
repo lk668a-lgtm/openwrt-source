@@ -3692,6 +3692,19 @@ ROLLBACK_ARMED=0
 echo "deploy_end=$(date -Iseconds)" >>"$BACKUP_DIR/.txn.log"
 say '部署完成。'
 
+# 守护进程：部署完必须确保它在跑。
+# 真机实测坑：watchdog 只在 init 的 start_service 里拉起，而部署走的是 apply.sh，
+# 且旧版循环写的是 while [ -f "$NFT_FILE" ]（开机时文件还没生成 → 立刻退出），
+# 结果「部署成功但守护进程不在」，之后进程挂了没人自愈。
+if ! pgrep -f 'tkproxy/watchdog\.sh' >/dev/null 2>&1; then
+	[ -x /usr/libexec/tkproxy/watchdog.sh ] && chmod +x /usr/libexec/tkproxy/watchdog.sh 2>/dev/null
+	if [ -f /usr/libexec/tkproxy/watchdog.sh ]; then
+		( setsid sh /usr/libexec/tkproxy/watchdog.sh >/dev/null 2>&1 & ) 2>/dev/null \
+			|| ( sh /usr/libexec/tkproxy/watchdog.sh >/dev/null 2>&1 & ) 2>/dev/null || true
+		say '  已拉起守护进程'
+	fi
+fi
+
 # 部署成功后后台体检"当前线路在用"的节点（只测绑定节点，约 1-2 分钟），
 # 结果并入 /tmp/tkproxy/nodetest.txt；前端顶栏据此提示"能连 WiFi 但上不了网"的死线。
 if [ -x /usr/libexec/tkproxy/nodetest.sh ]; then

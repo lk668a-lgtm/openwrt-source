@@ -49,8 +49,12 @@ start_dnsbridge() {
 }
 
 _fixed=0
-while [ -f "$NFT_FILE" ]; do
+# 常驻：不能写 while [ -f "$NFT_FILE" ]。
+# 开机时规则文件还没生成（要等第一次部署），那样循环会立刻退出，
+# 之后部署完也没人再拉起守护进程 —— 真机实测：部署成功但 watchdog 不在。
+while true; do
 	sleep 60
+	[ -f "$NFT_FILE" ] || continue
 
 	# 维护中（stop/卸载/升级）：不要和 stop 互斗
 	[ -f "$LOG_DIR/.paused" ] && continue
