@@ -51,6 +51,15 @@ local function pkg_version()
 		f:close()
 	end
 	if not ver then ver = apk_version() end
+	if not ver or ver == "" then
+		-- 固件里插件是文件注入（不是 apk 包），没有包数据库记录，
+		-- 兜底读随包写下的 VERSION 文件，避免界面显示 v0
+		local fv = io.open("/usr/share/tkproxy/VERSION", "r")
+		if fv then
+			ver = (fv:read("*l") or ""):gsub("%s+", "")
+			fv:close()
+		end
+	end
 	if not ver or ver == "" then ver = "0" end
 	-- opkg: 3.13.5-1 / apk: 3.13.5-r1 —— 统一显示成 3.13.5
 	ver = ver:gsub("[^%w%.%-]", ""):gsub("%-r?%d+$", "")
