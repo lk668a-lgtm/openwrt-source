@@ -69,7 +69,7 @@ try_bind_all()
 -- 服务重启/开机时桥 IP 可能还没就位，一次绑不上不能直接退出：
 -- 实测这样会让 30 条 DNS 全部停 8 分钟才被守护下一轮拉起来。
 local tries = 0
-while #listeners == 0 and tries < 18 do
+while #listeners == 0 and tries < 40 do
 	tries = tries + 1
 	io.stderr:write(string.format("暂无可用网关地址，5 秒后重试（第 %d 次）\n", tries))
 	os.execute("sleep 5")
