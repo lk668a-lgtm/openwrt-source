@@ -47,19 +47,33 @@ local UPB = ipbytes(UPSTREAM_IP) or string.char(1, 1, 1, 1)
 local UP_PORT_HI, UP_PORT_LO = math.floor(UPSTREAM_PORT / 256), UPSTREAM_PORT % 256
 
 local listeners = {}
-for n = 1, LINES do
-	local ip = "10.11." .. n .. ".1"
-	local s = nixio.socket("inet", "dgram")
-	-- 不要设 SO_REUSEADDR：UDP 上它允许多个进程绑同一地址端口，
-	-- 结果数据包被「另一个」实例收走，本实例永远收不到（25.12 实测踩过）。
-	-- 保持阻塞模式：25.12 的 nixio 上 setblocking(false) 会让 recvfrom
-	-- 即使有数据也返回 (false, EAGAIN)，数据被吃掉却拿不到内容，
-	-- 表现就是桥在监听、DNS 全超时。这里用 poll 等可读，不做非阻塞自旋。
-	if s:bind(ip, BASE_PORT + n) then
-		listeners[#listeners + 1] = { sock = s, line = n }
-	else
-		io.stderr:write("bind 失败 " .. ip .. ":" .. (BASE_PORT + n) .. "\n")
+local function try_bind_all()
+	listeners = {}
+	for n = 1, LINES do
+		local ip = "10.11." .. n .. ".1"
+		local s = nixio.socket("inet", "dgram")
+		-- 不要设 SO_REUSEADDR：UDP 上它允许多个进程绑同一地址端口，
+		-- 结果数据包被「另一个」实例收走，本实例永远收不到（25.12 实测踩过）。
+		-- 保持阻塞模式：25.12 的 nixio 上 setblocking(false) 会让 recvfrom
+		-- 即使有数据也返回 (false, EAGAIN)，数据被吃掉却拿不到内容，
+		-- 表现就是桥在监听、DNS 全超时。这里用 poll 等可读，不做非阻塞自旋。
+		if s:bind(ip, BASE_PORT + n) then
+			listeners[#listeners + 1] = { sock = s, line = n }
+		else
+			io.stderr:write("bind 失败 " .. ip .. ":" .. (BASE_PORT + n) .. "\n")
+		end
 	end
+end
+
+try_bind_all()
+-- 服务重启/开机时桥 IP 可能还没就位，一次绑不上不能直接退出：
+-- 实测这样会让 30 条 DNS 全部停 8 分钟才被守护下一轮拉起来。
+local tries = 0
+while #listeners == 0 and tries < 18 do
+	tries = tries + 1
+	io.stderr:write(string.format("暂无可用网关地址，5 秒后重试（第 %d 次）\n", tries))
+	os.execute("sleep 5")
+	try_bind_all()
 end
 
 if #listeners == 0 then
