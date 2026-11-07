@@ -533,16 +533,26 @@ function action_op()
 			end
 			local m = "没有识别到合法节点链接"
 			if unsup > 0 then m = ("没有可用节点：%d 行的协议不支持（详见下方列表）"):format(unsup) end
-			return send_json({ ok = false, msg = m, bad_lines = bad_lines })
+			return send_json({ ok = false, msg = m, bad_lines = bad_lines, imported = 0 })
 		end
+		local before = #(util.nodes() or {})
 		local ok, err = util.add_nodes(new_nodes)
 		if not ok then
-			return send_json({ ok = false, msg = err or "导入失败", bad_lines = bad_lines })
+			return send_json({ ok = false, msg = err or "导入失败", bad_lines = bad_lines, imported = 0 })
 		end
+		local after = #(util.nodes() or {})
+		local added = after - before
+		local dup = #new_nodes - added
+		-- 报「实际新增」而不是「解析成功」，否则全是重复时用户会以为导入成功却看不到新节点
+		local msg = string.format("新增 %d 个节点", added)
+		if dup > 0 then msg = msg .. string.format("，重复跳过 %d 个", dup) end
+		if #bad_lines > 0 then msg = msg .. string.format("，%d 行无法识别", #bad_lines) end
 		return send_json({
 			ok = true,
+			imported = added,
 			count = #new_nodes,
-			msg = string.format("已导入 %d 个节点", #new_nodes),
+			duplicated = dup,
+			msg = msg,
 			bad_lines = bad_lines,
 		})
 	end

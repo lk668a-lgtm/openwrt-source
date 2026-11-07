@@ -226,16 +226,19 @@ function M.parse_node_entry(entry)
 		link = raw
 	end
 	-- 四段写法 host:port:用户名:密码（老插件格式，用户会直接粘）：
-	-- 只在导入入口规范成 socks5://user:pass@host:port，池子里统一存标准链接
-	-- 只适配不含 :// 的裸四段，避免误伤 vless/vmess 等带协议头的链接
-	if not link:match("://") and link:match("^[%w%.%-]+:%d+:[^:]*:.*$") then
-		local h, p, u2, pw = link:match("^([%w%.%-]+):(%d+):([^:]*):(.*)$")
+	-- 兼容带 socks5:// / socks:// 前缀（SOCKS5 页面会自动补协议头）和带 ?front= 查询串，
+	-- 统一规范成 socks5://user:pass@host:port?front=…，池子里只存标准链接
+	local base, q = link:match("^(.-)(%?.*)$")
+	base = base or link
+	local four = base:gsub("^[sS][oO][cC][kK][sS]5?://", "")
+	if four ~= base or not base:match("://") then
+		local h, p, u2, pw = four:match("^([%w%.%-]+):(%d+):([^:]*):([^%?]*)$")
 		if h and p then
 			local userinfo = ""
 			if u2 ~= "" then
 				userinfo = u2 .. ":" .. pw
 			end
-			link = "socks5://" .. userinfo .. "@" .. h .. ":" .. p
+			link = "socks5://" .. userinfo .. "@" .. h .. ":" .. p .. (q or "")
 			if not name then name = h .. ":" .. p end
 		end
 	end

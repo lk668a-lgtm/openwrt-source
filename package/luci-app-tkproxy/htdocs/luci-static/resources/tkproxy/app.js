@@ -941,8 +941,30 @@
 						return;
 					}
 					setVerdict('ok', j.msg || '导入成功');
-					renderErrors([]);
-					setTimeout(function () { window.location.reload(); }, 800);
+					/* 有被跳过的行要留在页面上，别清掉——否则用户不知道哪些没进去 */
+					if (j.bad_lines && j.bad_lines.length > 0) {
+						var box2 = $('[data-tk-errors]', root);
+						if (box2) {
+							clear(box2);
+							var ul2 = el('ul');
+							j.bad_lines.forEach(function (b) {
+								var t2 = '第 ' + b.line + ' 行：' + (b.text || '格式错误');
+								if (b.reason) { t2 += '  →  ' + b.reason; }
+								ul2.appendChild(el('li', '', t2));
+							});
+							box2.appendChild(ul2);
+							box2.hidden = false;
+						}
+					} else {
+						renderErrors([]);
+					}
+					/* 只有真的导入了新节点才刷新；0 条（全重复/全非法）时保留提示，
+					   否则刷新会把「为什么没导入」冲掉，用户以为点了没反应 */
+					if ((j.imported || 0) > 0) {
+						setTimeout(function () { window.location.reload(); }, 800);
+					} else if (importText) {
+						importText.value = text;   /* 没导入就留着原文，方便用户改 */
+					}
 				}).catch(function () {
 					importBtn.disabled = false;
 					setVerdict('bad', '请求失败，请刷新页面后重试。');
