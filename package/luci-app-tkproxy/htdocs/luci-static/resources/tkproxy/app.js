@@ -3165,7 +3165,15 @@
 		function render(st) {
 			if (!st) { return; }
 			$all('[data-lic-machine]').forEach(function (n) { n.textContent = st.machine || '—'; });
-			$all('[data-lic-ver]').forEach(function (n) { n.textContent = st.version || '—'; });
+			// 这里的「版本」以前直接取 st.version，那是**授权票据格式版本**（恒为 v0），
+			// 不是插件版本，客户看到 v0 以为是固件坏了。改为优先显示页面传入的插件版本。
+			var pv = document.documentElement.getAttribute('data-tkproxy-ver')
+				|| (document.querySelector('[data-plugin-ver]') || {}).getAttribute
+				&& document.querySelector('[data-plugin-ver]').getAttribute('data-plugin-ver')
+				|| '';
+			$all('[data-lic-ver]').forEach(function (n) {
+				n.textContent = pv || st.plugin_version || '—';
+			});
 			$all('[data-lic-badge]').forEach(function (n) {
 				var on2 = st.activated === true, bad2 = on2 && st.expired === true;
 				n.textContent = !on2 ? '未激活' : (bad2 ? '授权异常' : '已激活 · 永久');
