@@ -50,6 +50,7 @@ installed_version() {
 		# apk 系统（25.12+）：从已装数据库读版本
 		v=$(awk -v p="$PKG" '/^P:/{cur=substr($0,3)} /^V:/{if(cur==p){print substr($0,3); exit}}' /lib/apk/db/installed 2>/dev/null)
 	fi
+	[ -n "$v" ] || v=$(head -n1 /usr/share/tkproxy/VERSION 2>/dev/null | tr -d ' \r\n')
 	[ -n "$v" ] || v="0"
 	printf '%s' "$v"
 }
