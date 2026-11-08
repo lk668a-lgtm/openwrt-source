@@ -73,13 +73,30 @@ heal_ifaces() {
 	done
 }
 
+# DNS 桥自愈：按「现有桥网关数」核对监听数，缺任何一个都要重拉
+# （只查 5301 会漏：实测 4 条线路时第 4 条的 5304 没起来，那条 WiFi 能连不能上网）
+heal_dns() {
+	# 注意：`ip -4 addr show 10.11.N.1/24` 这种写法 busybox ip 不认（恒失败 → 之前
+	# 这函数一直算出 0 条，等于没修）。统一从完整地址表里数。
+	_exp=$(ip -4 addr show 2>/dev/null | grep -oE '10\.11\.[0-9]+\.1/' | sort -u | grep -c .)
+	[ "${_exp:-0}" -gt 0 ] || return 0
+	_act=$(netstat -lnup 2>/dev/null | grep -c ':53[0-9][0-9] ')
+	if [ "${_act:-0}" -lt "$_exp" ]; then
+		logger -t tkproxy "守护：DNS 监听 $_act/$_exp 不足，重拉 DNS 桥"
+		for _p in $(ps w 2>/dev/null | awk '/[d]nsbridge.lua/{print $1}'); do kill -9 "$_p" 2>/dev/null; done
+		sleep 1
+		start_dnsbridge
+	fi
+}
+
 _fixed=0
-# 开机头 3 分钟：每 10 秒拉一次，抢在客户拿手机之前把 30 个网关全拉起来
-# （netifd 并发建桥会抢设备失败，隔几秒重试就成）
+# 开机头 1 分钟：每 10 秒拉一次接口和 DNS，抢在客户拿手机之前就绪
+# （netifd 并发建桥会抢设备失败，隔几秒重试就成；DNS 桥也可能先起来但绑不到晚到的桥）
 _boot=0
-while [ "$_boot" -lt 18 ]; do
+while [ "$_boot" -lt 6 ]; do
 	_boot=$((_boot + 1))
 	heal_ifaces
+	heal_dns
 	sleep 10
 done
 
@@ -91,17 +108,23 @@ while true; do
 	[ -f "$NFT_FILE" ] || continue
 
 	# 维护中（stop/卸载/升级）：不要和 stop 互斗
-	[ -f "$LOG_DIR/.paused" ] && continue
+	# 但 .paused 可能因部署被中断而残留（实测：残留后守护永久躺平，DNS 桥死了没人拉，
+	# 表现就是「WiFi 连得上、上不了网」）。超过 10 分钟一律当作过期标记清掉。
+	if [ -f "$LOG_DIR/.paused" ]; then
+		_pt=$(cat "$LOG_DIR/.paused" 2>/dev/null | tr -dc '0-9')
+		_now=$(date +%s)
+		case "$_pt" in ''|*[!0-9]*) _pt=0 ;; esac
+		if [ "$_pt" -gt 0 ] && [ $((_now - _pt)) -le 600 ]; then
+			continue
+		fi
+		logger -t tkproxy "守护：清除过期/无效的 .paused 标记（内容=${_pt}）"
+		rm -f "$LOG_DIR/.paused"
+	fi
 	# 部署进行中：apply.sh 自己会重建，别插手
 	pgrep -f 'apply\.sh' >/dev/null 2>&1 && continue
 
-	# 1) DNS 桥
-	if ip -4 addr show 2>/dev/null | grep -q "10\.11\.[0-9]*\.1/"; then
-		if ! netstat -lnup 2>/dev/null | grep -q ":5301"; then
-			logger -t tkproxy "守护：DNS 桥未监听，自动拉起"
-			start_dnsbridge
-		fi
-	fi
+	# 1) DNS 桥（见 heal_dns）
+	heal_dns
 
 	# 1.5) 线路接口：开机偶发 tkp01/02/03/05 等几个桥 up=false（netifd 报
 	# DEVICE_CLAIM_FAILED，重试可成功），没有 10.11.N.1 网关 → 对应 WiFi 上不了网
@@ -131,7 +154,12 @@ while true; do
 	if [ ! -s /var/run/xray.pid ] || ! kill -0 "$(cat /var/run/xray.pid 2>/dev/null)" 2>/dev/null; then
 		logger -t tkproxy "守护：xray 已退出，重启服务"
 		( sleep 1; /etc/init.d/tkproxy restart >/dev/null 2>&1 ) &
-		exit 0
+		# 重启服务会经 stop_service 写一个 .paused（当前时间），若不清理，
+		# 守护接下来 10 分钟都会跳过自愈。这里等重启跑完后主动清掉。
+		( sleep 90; rm -f "$LOG_DIR/.paused" ) &
+		# 不要 exit：退出后若 init 没有重新拉起（25.12 的 start_service 时机不可靠），
+		# 守护就永远消失，后面 DNS 桥再死也没人管。继续循环，下一轮自会看到服务已恢复。
+		continue
 	fi
 
 	# 4) 每日静默核验

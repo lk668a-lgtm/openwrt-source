@@ -47,33 +47,51 @@ local UPB = ipbytes(UPSTREAM_IP) or string.char(1, 1, 1, 1)
 local UP_PORT_HI, UP_PORT_LO = math.floor(UPSTREAM_PORT / 256), UPSTREAM_PORT % 256
 
 local listeners = {}
-local function try_bind_all()
-	listeners = {}
+local bound = {}
+local function try_bind_missing()
 	for n = 1, LINES do
-		local ip = "10.11." .. n .. ".1"
-		local s = nixio.socket("inet", "dgram")
-		-- 不要设 SO_REUSEADDR：UDP 上它允许多个进程绑同一地址端口，
-		-- 结果数据包被「另一个」实例收走，本实例永远收不到（25.12 实测踩过）。
-		-- 保持阻塞模式：25.12 的 nixio 上 setblocking(false) 会让 recvfrom
-		-- 即使有数据也返回 (false, EAGAIN)，数据被吃掉却拿不到内容，
-		-- 表现就是桥在监听、DNS 全超时。这里用 poll 等可读，不做非阻塞自旋。
-		if s:bind(ip, BASE_PORT + n) then
-			listeners[#listeners + 1] = { sock = s, line = n }
-		else
-			io.stderr:write("bind 失败 " .. ip .. ":" .. (BASE_PORT + n) .. "\n")
+		if not bound[n] then
+			local ip = "10.11." .. n .. ".1"
+			local s = nixio.socket("inet", "dgram")
+			-- 不要设 SO_REUSEADDR：UDP 上它允许多个进程绑同一地址端口，
+			-- 结果数据包被「另一个」实例收走，本实例永远收不到（25.12 实测踩过）。
+			-- 保持阻塞模式：25.12 的 nixio 上 setblocking(false) 会让 recvfrom
+			-- 即使有数据也返回 (false, EAGAIN)，数据被吃掉却拿不到内容，
+			-- 表现就是桥在监听、DNS 全超时。这里用 poll 等可读，不做非阻塞自旋。
+			if s:bind(ip, BASE_PORT + n) then
+				bound[n] = true
+				listeners[#listeners + 1] = { sock = s, line = n }
+			else
+				io.stderr:write("bind 失败 " .. ip .. ":" .. (BASE_PORT + n) .. "\n")
+			end
 		end
 	end
 end
 
-try_bind_all()
--- 服务重启/开机时桥 IP 可能还没就位，一次绑不上不能直接退出：
--- 实测这样会让 30 条 DNS 全部停 8 分钟才被守护下一轮拉起来。
+-- 期望绑定数 = 当前真实存在 10.11.N.1 的桥数量（线路可能少于 LINES）
+-- 注意：busybox 的 `ip -4 addr show 10.11.N.1/24` 恒失败，必须从完整地址表里数，
+-- 否则这里恒为 0 → 绑好之后还会空转 40 轮（200 秒）才开始服务，期间 DNS 全超时。
+local function expected_ports()
+	local f = io.popen("ip -4 addr show 2>/dev/null | grep -oE '10\\.11\\.[0-9]+\\.1/' | sort -u | wc -l")
+	local n = 0
+	if f then
+		n = tonumber((f:read("*l") or "0")) or 0
+		f:close()
+	end
+	return n
+end
+
+try_bind_missing()
+-- 服务重启/开机时桥 IP 可能还没就位：**逐条补绑**，不能只在一条都没绑上时重试
+-- （实测：4 条线路里第 4 条的桥晚到，它永远拿不到 DNS 监听 → 那个 WiFi 能连不能上网）
 local tries = 0
-while #listeners == 0 and tries < 40 do
+while tries < 40 do
+	local exp = expected_ports()
+	if exp > 0 and #listeners >= exp then break end
 	tries = tries + 1
-	io.stderr:write(string.format("暂无可用网关地址，5 秒后重试（第 %d 次）\n", tries))
+	io.stderr:write(string.format("待补绑 %d/%d 条，5 秒后重试（第 %d 次）\n", #listeners, exp, tries))
 	os.execute("sleep 5")
-	try_bind_all()
+	try_bind_missing()
 end
 
 if #listeners == 0 then

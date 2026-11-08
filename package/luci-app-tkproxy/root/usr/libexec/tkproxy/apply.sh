@@ -2139,7 +2139,7 @@ stop_service() {
 	# 关键：先落「维护中」标记。看门狗发现 xray 没了会立刻把服务重新拉起来，
 	# 直接和 stop 互斗——现象就是 opkg remove / init stop 卡住十几分钟不返回。
 	mkdir -p /tmp/tkproxy 2>/dev/null
-	: > /tmp/tkproxy/.paused
+	date +%s > /tmp/tkproxy/.paused 2>/dev/null || : > /tmp/tkproxy/.paused
 	# 再收掉看门狗，并等它真正退出（它可能正睡在 sleep 60 里）
 	if [ -s /var/run/tkproxy-watchdog.pid ]; then
 		_wd=$(cat /var/run/tkproxy-watchdog.pid 2>/dev/null)
