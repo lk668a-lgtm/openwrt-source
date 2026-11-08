@@ -10,6 +10,8 @@ on:
     branches: [buer-wrt]
     paths:
       - 'xr30-build/**'
+      # 设备定义/镜像规则改动也要重编（DEVICE_PACKAGES、IMAGES 之类都在这）
+      - 'target/linux/mediatek/**'
       - 'package/luci-app-tkproxy/**'
       - 'package/luci-theme-argon/**'
       - 'package/luci-app-buerwrt-ads/**'
