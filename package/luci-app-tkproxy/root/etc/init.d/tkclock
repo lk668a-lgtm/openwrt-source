@@ -1,0 +1,51 @@
+#!/bin/sh /etc/rc.common
+# tkproxy 开机校时
+#
+# 为什么需要：这批机器没有 RTC，首次开机时钟停在固件编译日期。此时
+#   - 服务器证书「尚未生效」→ 所有 HTTPS 校验失败
+#   - 用户看到的是「卡密点了没反应 / 无法连接卡密服务器」
+# 而 busybox 的 ntpd 只在启动那一刻解析一次域名，开机时 WAN/DNS 往往还没就绪，
+# 它就再也不会重试（实测：时钟停在编译日后一直不动）。
+#
+# 做法：等默认路由出现后，做一次性 NTP（必须用域名，busybox ntpd 才会跳大偏差），
+#       失败再用 HTTP Date 兜底（-k：只取时间，安全靠票据验签）。
+# 成功即退出，最长重试 10 分钟。
+
+START=15
+STOP=95
+
+sync_once() {
+	# 1) 一次性 NTP（域名形式；用 IP 时 busybox ntpd 不会跳大偏差，实测无效）
+	local s
+	for s in ntp.aliyun.com ntp.tencent.com cn.ntp.org.cn ntp.ntsc.ac.cn; do
+		ntpd -n -q -p "$s" >/dev/null 2>&1 && return 0
+	done
+	# 2) 兜底：读 HTTP 响应头里的 Date
+	local u hdr ts
+	for u in https://02.lkkami.top/api http://connect.rom.miui.com/generate_204 http://www.baidu.com/; do
+		hdr=$(curl -k -m 5 -sI "$u" 2>/dev/null | sed -n 's/^[Dd]ate: //p' | head -n1 | tr -d '\r')
+		[ -n "$hdr" ] || continue
+		ts=$(date -u -D '%a, %d %b %Y %H:%M:%S GMT' -d "$hdr" +%s 2>/dev/null)
+		[ -n "$ts" ] || continue
+		date -s "@$ts" >/dev/null 2>&1 && return 0
+	done
+	return 1
+}
+
+start() {
+	(
+		i=0
+		while [ "$i" -lt 30 ]; do
+			if ip route 2>/dev/null | grep -q '^default'; then
+				if sync_once; then
+					logger -t tkclock "开机校时成功：$(date '+%Y-%m-%d %H:%M:%S')"
+					break
+				fi
+			fi
+			i=$((i + 1))
+			sleep 20
+		done
+	) >/dev/null 2>&1 &
+}
+
+stop() { : ; }

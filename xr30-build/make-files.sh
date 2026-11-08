@@ -50,7 +50,7 @@ cat > "$OUT/etc/uci-defaults/99-buer-wrt-imagebuilder" <<'EOF'
 #!/bin/sh
 # ImageBuilder 出来的镜像里，uci-defaults 不会像包安装那样自动执行，
 # 这里挂一个开机钩子，把首启脚本按顺序跑一遍（幂等）。
-for f in /etc/uci-defaults/9*-buer-wrt-* /etc/uci-defaults/99-tkproxy-argon-light /etc/uci-defaults/90-buerwrt-ads-defaults /etc/uci-defaults/30_luci-theme-argon; do
+for f in /etc/uci-defaults/9*-buer-wrt-* /etc/uci-defaults/99-tkproxy-argon-light /etc/uci-defaults/90-buerwrt-ads-defaults /etc/uci-defaults/30_luci-theme-argon /etc/uci-defaults/91-tkproxy-bootfix; do
     [ -f "$f" ] || continue
     case "$f" in *99-buer-wrt-imagebuilder*) continue ;; esac
     sh "$f" >/dev/null 2>&1 || true

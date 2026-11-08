@@ -46,22 +46,31 @@
 	function clear(node) {
 		while (node && node.firstChild) { node.removeChild(node.firstChild); }
 	}
-	function post(cmd, extra) {
+	function post(cmd, extra, opts) {
 		var body = new URLSearchParams();
 		body.set('token', token);
 		body.set('cmd', cmd);
 		if (extra) {
 			Object.keys(extra).forEach(function (k) { body.set(k, extra[k]); });
 		}
-		return fetch(base + '/action', {
+		opts = opts || {};
+		var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+		var to = setTimeout(function () { if (ctl) { ctl.abort(); } }, opts.timeout || 20000);
+		var req = {
 			method: 'POST',
 			credentials: 'same-origin',
 			cache: 'no-store',
 			headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
 			body: body.toString()
-		}).then(function (r) {
+		};
+		if (ctl) { req.signal = ctl.signal; }
+		return fetch(base + '/action', req).then(function (r) {
+			clearTimeout(to);
 			if (!r.ok) { throw new Error('HTTP ' + r.status); }
 			return r.json();
+		}).catch(function (e) {
+			clearTimeout(to);
+			throw e;
 		});
 	}
 	function getState(what) {
@@ -3238,16 +3247,27 @@
 				if (!card) { say('is-bad', '请先粘贴卡密'); return; }
 				btnA.disabled = true;
 				say('is-idle', '正在激活…');
-				post('license_activate', { card: card }).then(function (r) {
+				var t0 = Date.now();
+				var tick = setInterval(function () {
+					say('is-idle', '正在激活… 已等 ' + Math.round((Date.now() - t0) / 1000) + ' 秒（首次会先校正时钟，最多 60 秒）');
+				}, 1000);
+				post('license_activate', { card: card }, { timeout: 60000 }).then(function (r) {
+					clearInterval(tick);
 					btnA.disabled = false;
 					if (r && r.data) { render(r.data); }
 					if (r && r.ok) {
 						say('is-online', r.msg || '激活成功');
 						if (inp) { inp.value = ''; }
+						load();
 					} else {
 						say('is-bad', (r && r.msg) || '激活失败');
 					}
-				}).catch(function () { btnA.disabled = false; say('is-bad', '激活失败'); });
+				}).catch(function (e) {
+					clearInterval(tick);
+					btnA.disabled = false;
+					var why = (e && e.name === 'AbortError') ? '超时 60 秒' : ((e && e.message) || '网络异常');
+					say('is-bad', '激活请求失败：' + why + '（请确认 WAN 已联网后再试）');
+				});
 			});
 		}
 

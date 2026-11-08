@@ -36,6 +36,18 @@ dedupe_or_exit() {
 }
 dedupe_or_exit
 
+# 开机校时（一次性，后台）：无 RTC 的机器首次开机时钟停在固件编译日期，
+# 会让所有 HTTPS（含卡密服务器）证书校验失败，用户看到的是「无法连接卡密服务器」。
+# WAN 可能比本脚本晚就绪，重试 10 次、每次 30 秒，最多等 5 分钟。
+(
+	i=0
+	while [ "$i" -lt 10 ]; do
+		sh /usr/libexec/tkproxy/license.sh fixclock >/dev/null 2>&1 && break
+		i=$((i + 1))
+		sleep 30
+	done
+) >/dev/null 2>&1 &
+
 start_dnsbridge() {
 	[ -f /usr/libexec/tkproxy/dnsbridge.lua ] || return 0
 	_pid=$(cat /var/run/tkproxy-dnsbridge.pid 2>/dev/null || true)

@@ -1,0 +1,61 @@
+#!/bin/sh /etc/rc.common
+# tkproxy WAN 口自适应
+#
+# 为什么需要：这台机器有两个可用网口可以做 WAN —— eth1（1G，默认 WAN）和
+# eth0（2.5G，默认不属于任何网络）。客户按物理位置随手插，插到 2.5G 口就
+# 「网口没有网」，上游进不来，表现为刷完固件无法激活、WiFi 也不上网。
+#
+# 关键教训：只看「有没有链路」就切口是危险的 —— 2.5G 口可能插着一台不回应
+# DHCP 的设备，切过去反而把本来好的 WAN 弄断（本地实测：切到 eth0 后
+# curl=000、ping 不通）。所以改成「先试后用」：按 eth1 → eth0 顺序实际
+# reload 并等地址，拿到地址才留下；都不行就退回 eth1，绝不把能用的 WAN 弄丢。
+
+START=20
+STOP=96
+
+has_ip() {
+	ip -4 addr show dev "$1" 2>/dev/null | grep -q 'inet '
+}
+
+set_wan() {
+	uci -q set network.wan.device="$1"
+	uci -q set network.wan6.device="$1" 2>/dev/null
+	uci -q commit network
+	ubus call network reload >/dev/null 2>&1
+}
+
+start() {
+	(
+		sleep 45
+		cur=$(uci -q get network.wan.device)
+		[ -n "$cur" ] || cur=eth1
+		# 已经能拿到地址就不动
+		has_ip "$cur" && exit 0
+
+		for cand in eth1 eth0; do
+			[ "$(cat /sys/class/net/$cand/carrier 2>/dev/null)" = "1" ] || continue
+			if has_ip "$cand"; then
+				set_wan "$cand"
+				exit 0
+			fi
+			set_wan "$cand"
+			i=0
+			while [ "$i" -lt 5 ]; do
+				sleep 5
+				if has_ip "$cand"; then
+					logger -t tkwan "WAN 已自动切到 $cand 并拿到地址"
+					exit 0
+				fi
+				i=$((i + 1))
+			done
+		done
+
+		# 都不行：退回默认口，避免把 WAN 留在死口上
+		if [ "$(uci -q get network.wan.device)" != "eth1" ]; then
+			set_wan eth1
+			logger -t tkwan "候选网口都取不到地址，已退回 eth1"
+		fi
+	) >/dev/null 2>&1 &
+}
+
+stop() { : ; }

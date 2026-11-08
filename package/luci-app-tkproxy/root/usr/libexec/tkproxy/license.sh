@@ -120,16 +120,41 @@ lic_device_name() {
 	printf '%s-%s' "$(printf '%s' "$model" | tr ' ' '_')" "$(printf '%s' "$lan" | tr 'a-f' 'A-F')"
 }
 
-# 服务器时间差（HTTP Date），防止本机时间不准导致判决错误
-lic_time_offset() {
-	local url="$1" hdr srv now
+# 服务器时间（HTTP Date）。
+# 注意：客户设备没有 RTC，首次开机时钟停在固件编译日期，此时服务器证书
+# 「尚未生效」，curl 校验必失败，连 Date 头都读不到。所以拿不到时用 -k 兜底——
+# 这里只取时间，真正的安全保证是票据的 usign 验签（见 lic_judge）。
+lic_server_time() {
+	local url="$1" hdr srv
 	hdr=$(curl -m 5 --connect-timeout 3 -sSI "$url" 2>/dev/null | sed -n 's/^[Dd]ate: //p' | head -n1 | tr -d '\r')
-	# 取不到就返回空：调用方据此区分「未知」和「一致」，不能拿 0 冒充
+	[ -n "$hdr" ] || hdr=$(curl -k -m 5 --connect-timeout 3 -sSI "$url" 2>/dev/null | sed -n 's/^[Dd]ate: //p' | head -n1 | tr -d '\r')
 	[ -n "$hdr" ] || return 1
 	srv=$(date -u -D '%a, %d %b %Y %H:%M:%S GMT' -d "$hdr" +%s 2>/dev/null)
 	[ -n "$srv" ] || return 1
+	echo "$srv"
+}
+
+# 服务器时间差（HTTP Date），防止本机时间不准导致判决错误
+lic_time_offset() {
+	local srv now
+	srv=$(lic_server_time "$1") || return 1
 	now=$(date +%s)
 	echo $((srv - now))
+}
+
+# 本机时钟偏差超过一天就用服务器时间校正系统时钟。
+# 现场症状：客户说明明有网，插件却报「无法连接卡密服务器」——其实是时钟错、证书校不过。
+lic_fix_clock() {
+	local srv now off
+	srv=$(lic_server_time "$1") || return 1
+	now=$(date +%s)
+	off=$((srv - now))
+	if [ "$off" -gt 86400 ] || [ "$off" -lt -86400 ]; then
+		date -s "@$srv" >/dev/null 2>&1 || date -u -D '%s' -d "@$srv" >/dev/null 2>&1
+		log "系统时钟偏差 ${off}s，已按服务器时间校正"
+		return 0
+	fi
+	return 1
 }
 
 # 直连 POST（不走代理；域名用国内 DNS 解析后 --resolve，避免被本机分流影响）
@@ -496,9 +521,23 @@ lic_gate() {
 lic_activate() {
 	local card="$1" off resp res ok code msg exp mask
 	[ -n "$card" ] || { echo "ERR 请输入卡密"; return 1; }
+	# 快速失败：没有默认路由就立刻给明确提示，别让前端白等 20~40 秒
+	if ! ip route 2>/dev/null | grep -q '^default'; then
+		echo "ERR 网络未就绪：请先把网线插到路由器的 WAN 口（或检查上游是否给地址）"
+		return 1
+	fi
+	# 时钟明显不对时先校正，否则 HTTPS 证书校验必失败（客户机无 RTC 的常见故障）
+	lic_fix_clock "$LIC_PRIMARY" >/dev/null 2>&1
 	off=$(lic_time_offset "$LIC_PRIMARY")
 	off=${off:-0}
 	resp=$(lic_post "$LIC_PRIMARY" "/v2/license/activate" "$(lic_body "$card" "$off")")
+	if [ -z "$resp" ]; then
+		# 再兜一次：可能刚接入网络时时钟仍偏，校正后重试
+		lic_fix_clock "$LIC_PRIMARY" >/dev/null 2>&1
+		off=$(lic_time_offset "$LIC_PRIMARY")
+		off=${off:-0}
+		resp=$(lic_post "$LIC_PRIMARY" "/v2/license/activate" "$(lic_body "$card" "$off")")
+	fi
 	if [ -z "$resp" ]; then
 		off=$(lic_time_offset "$LIC_BACKUP")
 		off=${off:-0}
@@ -634,6 +673,10 @@ case "$1" in
 	activate) lic_activate "$2" ;;
 	verify)   lic_verify ;;
 	dailycheck) lic_dailycheck ;;
+	fixclock) # 校正系统时钟（无 RTC 设备首次开机时钟停在编译日期，会让 HTTPS 全部校验失败）
+		if lic_fix_clock "$LIC_PRIMARY"; then echo "OK 时钟已校正：$(date '+%Y-%m-%d %H:%M:%S')"
+		elif srv=$(lic_server_time "$LIC_PRIMARY"); then echo "OK 时钟正常：$(date '+%Y-%m-%d %H:%M:%S')"
+		else echo "ERR 取不到服务器时间（网络未就绪）"; exit 1; fi ;;
 	reset)    lic_reset ;;
 	gate)     lic_gate ;;
 	ticket)   # 调试口：输出整票校验状态词（与 lic_gate 同一判定核心）
