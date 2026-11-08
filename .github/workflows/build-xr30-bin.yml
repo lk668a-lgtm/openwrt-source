@@ -10,6 +10,7 @@ on:
     branches: [buer-wrt]
     paths:
       - 'xr30-build/**'
+      - 'xr30-build-bin/**'
       # 设备定义/镜像规则改动也要重编（DEVICE_PACKAGES、IMAGES 之类都在这）
       - 'target/linux/mediatek/**'
       - 'package/luci-app-tkproxy/**'
@@ -99,11 +100,13 @@ jobs:
           echo "实际提交：$(git rev-parse HEAD)"
           test "$(git rev-parse HEAD)" = "$REPO_COMMIT" || { echo "::error::提交号不一致"; exit 1; }
 
-      - name: 注入 XR30 设备定义
+      - name: 注入 XR30 .bin 设备定义
         run: |
-          cp xr30-build/dts/*.dts openwrt/target/linux/mediatek/dts/
-          python3 xr30-build/patch_device.py openwrt
-          grep -n "Device/cmcc_xr30" openwrt/target/linux/mediatek/image/filogic.mk
+          # 上游 immortalwrt 没有 cmcc_xr30 系列机型，必须自己注入 DTS + 设备块。
+          # .bin 版用 xr30-build-bin/（与 .itb 版的注入分开，避免互相触发重编）。
+          cp xr30-build-bin/dts/*.dts* openwrt/target/linux/mediatek/dts/
+          python3 xr30-build-bin/patch_device_bin.py openwrt
+          grep -n "Device/cmcc_xr30-nand" openwrt/target/linux/mediatek/image/filogic.mk
 
       - name: 放入品牌文件与插件包
         run: |
