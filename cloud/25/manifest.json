@@ -7,6 +7,6 @@
   "sha256": "4df08a300f776db8289d58af16d862526cc21e39a8df3835f81f79cdfb57e8c5",
   "size": 551349,
   "notes": "3.15.15：修复 DHCP force=1（手机拿不到 IP）、DNS 桥逐条补绑、守护自愈失效；依赖补齐 nftables + tproxy 内核模块",
-  "published_at": "2026-11-08T05:12:37Z",
+  "published_at": "2026-11-08T05:14:55Z",
   "url": "https://github.com/lk668a-lgtm/openwrt-source/releases/download/tkproxy-cloud/luci-app-tkproxy_3.15.15-r2.apk"
 }
