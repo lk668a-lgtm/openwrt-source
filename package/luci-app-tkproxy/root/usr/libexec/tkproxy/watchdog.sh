@@ -19,15 +19,22 @@ LOG_DIR=/tmp/tkproxy
 
 # 单实例保护：init/apply/手动都可能各起一个，多个守护会同时 ifup 打架
 _pidf=/var/run/tkproxy-watchdog.pid
-if [ -s "$_pidf" ]; then
+# 单实例：pidfile 指向的另一个存活实例存在就退出。
+# 只在启动时检查不够——服务 restart 时可能出现：旧实例还活着但 pidfile 已被新实例覆盖，
+# 于是两个都在跑（实测过 2 个），会互相重复杀/拉 DNS 桥。每轮也复查一次。
+dedupe_or_exit() {
 	_oldpid=$(cat "$_pidf" 2>/dev/null)
 	if [ -n "$_oldpid" ] && [ "$_oldpid" != "$$" ] && [ -d "/proc/$_oldpid" ]; then
 		case "$(tr '\0' ' ' < "/proc/$_oldpid/cmdline" 2>/dev/null || true)" in
-			*watchdog.sh*) exit 0 ;;
+			*watchdog.sh*)
+				logger -t tkproxy "守护：发现重复实例 $_oldpid，本实例($$)退出"
+				exit 0
+				;;
 		esac
 	fi
-fi
-echo $$ > "$_pidf"
+	echo $$ > "$_pidf"
+}
+dedupe_or_exit
 
 start_dnsbridge() {
 	[ -f /usr/libexec/tkproxy/dnsbridge.lua ] || return 0
@@ -89,14 +96,36 @@ heal_dns() {
 	fi
 }
 
+# DHCP 自愈：dnsmasq 的 dhcp_check 一旦误判「本接口已有 DHCP 服务器」，
+# 该线路就永久发不出地址（手机连上没 IP）。这里核对「地址池条数 vs 桥网关数」，
+# 不足就清探测缓存 + 给每条线路的 dhcp 段加 force=1 + 重载 dnsmasq。
+heal_dhcp() {
+	_exp=$(ip -4 addr show 2>/dev/null | grep -oE '10\.11\.[0-9]+\.1/' | sort -u | grep -c .)
+	[ "${_exp:-0}" -gt 0 ] || return 0
+	_n=$(cat /var/etc/dnsmasq.conf.* 2>/dev/null | grep -oE 'set:tkp[0-9]+' | sort -u | grep -c .)
+	if [ "${_n:-0}" -lt "$_exp" ]; then
+		logger -t tkproxy "守护：DHCP 地址池 $_n/$_exp 不足，清探测缓存并重载"
+		rm -f /tmp/*.dhcp /tmp/dhcp.*.dhcp 2>/dev/null
+		for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+			_if=$(printf 'tkp%02d' "$_i")
+			uci -q get "dhcp.$_if" >/dev/null 2>&1 || continue
+			uci -q set "dhcp.$_if.force=1"
+		done
+		uci -q commit dhcp
+		/etc/init.d/dnsmasq reload >/dev/null 2>&1
+	fi
+}
+
 _fixed=0
 # 开机头 1 分钟：每 10 秒拉一次接口和 DNS，抢在客户拿手机之前就绪
 # （netifd 并发建桥会抢设备失败，隔几秒重试就成；DNS 桥也可能先起来但绑不到晚到的桥）
 _boot=0
 while [ "$_boot" -lt 6 ]; do
 	_boot=$((_boot + 1))
+	dedupe_or_exit
 	heal_ifaces
 	heal_dns
+	heal_dhcp
 	sleep 10
 done
 
@@ -104,6 +133,7 @@ done
 # 开机时规则文件还没生成（要等第一次部署），那样循环会立刻退出，
 # 之后部署完也没人再拉起守护进程 —— 真机实测：部署成功但 watchdog 不在。
 while true; do
+	dedupe_or_exit
 	sleep 60
 	[ -f "$NFT_FILE" ] || continue
 
@@ -125,6 +155,9 @@ while true; do
 
 	# 1) DNS 桥（见 heal_dns）
 	heal_dns
+
+	# 1.2) DHCP 地址池（见 heal_dhcp）
+	heal_dhcp
 
 	# 1.5) 线路接口：开机偶发 tkp01/02/03/05 等几个桥 up=false（netifd 报
 	# DEVICE_CLAIM_FAILED，重试可成功），没有 10.11.N.1 网关 → 对应 WiFi 上不了网

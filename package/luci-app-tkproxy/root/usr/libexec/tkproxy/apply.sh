@@ -2665,6 +2665,11 @@ while IFS="$SEP" read -r idx ssid slug br subnet gw port band ntype; do
 	tkp_set "dhcp.$_if.dhcpv6" disabled
 	tkp_set "dhcp.$_if.ra" disabled
 	tkp_set "dhcp.$_if.ndp" disabled
+	# force=1：绕开 dnsmasq 的 dhcp_check 探测。
+	# 该探测会先 udhcpc 打一枪，只要收到任何应答就认定「本接口已有 DHCP 服务器」并
+	# 永久拒绝发地址（结果还缓存在 /tmp/dhcp.<br>.dhcp），症状就是手机连上 WiFi
+	# 却拿不到 IP —— 实测 line1 因此整条不可用。我们明确要自己发地址，必须 force。
+	tkp_set "dhcp.$_if.force" 1
 	tkp_set "dhcp.$_if.tkproxy" 1
 
 	# firewall：独立 zone，SSID 之间三层隔离
