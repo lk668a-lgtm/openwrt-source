@@ -6,6 +6,9 @@ on:
     paths:
       - '.github/workflows/build-uboot-2022.yml'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -50,3 +53,11 @@ jobs:
           name: uboot-2022-cmcc_xr30
           path: uboot/output/*
           if-no-files-found: error
+
+      - name: Publish to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: uboot2022-${{ github.run_number }}
+          name: U-Boot 2022.07 cmcc_xr30 (${{ github.run_number }})
+          files: uboot/output/*
+          token: ${{ secrets.GITHUB_TOKEN }}
