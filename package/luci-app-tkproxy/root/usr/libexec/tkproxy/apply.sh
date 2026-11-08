@@ -2723,6 +2723,12 @@ while IFS="$SEP" read -r idx ssid slug br subnet gw port band ntype; do
 		tkp_set "wireless.${_if}_$_b.isolate" 1
 		tkp_set "wireless.${_if}_$_b.disabled" 0
 		tkp_set "wireless.${_if}_$_b.tkproxy" 1
+		# 老手机兼容（实测：某些机型在这套 AP 上会卡在
+		# "did not acknowledge authentication response" 或连上 2 秒被踢）：
+		#   disassoc_low_ack=0 —— 信号差也不主动踢客户端
+		#   uapsd=0           —— 关掉 U-APSD 省电协商
+		tkp_set "wireless.${_if}_$_b.disassoc_low_ack" 0
+		tkp_set "wireless.${_if}_$_b.uapsd" 0
 	done
 
 	# bridge isolate：AP 间客户端互访禁止

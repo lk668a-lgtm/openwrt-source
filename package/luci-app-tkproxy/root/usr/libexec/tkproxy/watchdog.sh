@@ -128,6 +128,63 @@ heal_dhcp() {
 	fi
 }
 
+# 默认路由自愈：WAN 拿到地址、但内核主表里没有默认路由时，整机都出不了网，
+# 客户看到的是「所有 WiFi 都连上、但网页打不开」。真机实测出现过：netifd 的
+# ubus 状态里明明有 0.0.0.0/0 → 192.168.100.1，内核 `ip route` 却是空的。
+# 这里每轮核对，缺了就按 ubus 里的网关补上，补不上就重拨 WAN。
+heal_route() {
+	_wan=$(uci -q get network.wan.device)
+	[ -n "$_wan" ] || _wan=eth1
+	ip -4 addr show dev "$_wan" 2>/dev/null | grep -q 'inet ' || return 0
+	ip route show default 2>/dev/null | grep -q '^default' && return 0
+	_gw=$(ubus call network.interface.wan status 2>/dev/null | \
+		jsonfilter -e '@.route[@.target="0.0.0.0"].nexthop' 2>/dev/null)
+	if [ -n "$_gw" ]; then
+		ip route add default via "$_gw" dev "$_wan" 2>/dev/null
+	fi
+	if ! ip route show default 2>/dev/null | grep -q '^default'; then
+		logger -t tkproxy "守护：WAN 无默认路由且补不回来，重拨 $_wan"
+		ifup wan >/dev/null 2>&1
+		return 0
+	fi
+	# 手动加的路由 netifd 不认，界面/接口一 reload 就会被清掉（实测：频繁探测时
+	# 每 1~2 分钟丢一次）。同一问题 5 分钟内出现第 2 次，就让 netifd 重新接管
+	# （重拨 wan），之后它自己会维护这条路由，不用我们反复补。
+	_cnt_file=/tmp/tkproxy/.route_heal_cnt
+	_now=$(date +%s)
+	_cnt=0
+	_last=0
+	[ -f "$_cnt_file" ] && { _cnt=$(cut -d' ' -f1 "$_cnt_file" 2>/dev/null); _last=$(cut -d' ' -f2 "$_cnt_file" 2>/dev/null); }
+	case "$_cnt" in ''|*[!0-9]*) _cnt=0 ;; esac
+	case "$_last" in ''|*[!0-9]*) _last=0 ;; esac
+	[ $((_now - _last)) -gt 300 ] && _cnt=0
+	_cnt=$((_cnt + 1))
+	echo "$_cnt $_now" > "$_cnt_file"
+	if [ "$_cnt" -ge 2 ]; then
+		logger -t tkproxy "守护：默认路由反复丢失（$_cnt 次/5 分钟），重拨 wan 交回 netifd 维护"
+		rm -f "$_cnt_file"
+		ifdown wan >/dev/null 2>&1
+		sleep 2
+		ifup wan >/dev/null 2>&1
+	fi
+}
+
+# 探针网卡清理：status.sh / line-audit 会用 tkv* 虚拟网卡临时挂到线路桥上测出口，
+# 本该测完就删。残留的坏处是实打实的：每张网卡进/出网桥都会给 hostapd 发 netlink 事件，
+# 堆多了会把它的事件 socket 撑爆（日志 `VLAN: vlan_event_receive: recv failed: No buffer
+# space available`），一旦爆掉，某条 BSS 就可能只建控制面、不建数据面 —— 表现为手机
+# 能关联、能过四次握手，但 rx/tx 全是 0 字节，拿不到 DHCP，2 秒后自己断开。
+# 这里在没有任何探测进程在跑时才清理，避免把正在用的探针网卡删掉。
+heal_probe_leftover() {
+	pgrep -f 'line-audit|portprobe|status\.sh|nodetest' >/dev/null 2>&1 && return 0
+	_left=$(ip -o link show 2>/dev/null | grep -o 'tkv[0-9]\+' | sort -u | tr '\n' ' ')
+	[ -n "$_left" ] || return 0
+	for _l in $_left; do
+		ip link del "$_l" 2>/dev/null
+	done
+	logger -t tkproxy "守护：清理残留探针网卡：$_left"
+}
+
 _fixed=0
 # 开机头 1 分钟：每 10 秒拉一次接口和 DNS，抢在客户拿手机之前就绪
 # （netifd 并发建桥会抢设备失败，隔几秒重试就成；DNS 桥也可能先起来但绑不到晚到的桥）
@@ -135,6 +192,7 @@ _boot=0
 while [ "$_boot" -lt 6 ]; do
 	_boot=$((_boot + 1))
 	dedupe_or_exit
+	heal_route
 	heal_ifaces
 	heal_dns
 	heal_dhcp
@@ -147,6 +205,9 @@ done
 while true; do
 	dedupe_or_exit
 	sleep 60
+	# 默认路由与部署无关：没部署过也要能上网（激活、升级都要它）
+	heal_route
+	heal_probe_leftover
 	[ -f "$NFT_FILE" ] || continue
 
 	# 维护中（stop/卸载/升级）：不要和 stop 互斗
