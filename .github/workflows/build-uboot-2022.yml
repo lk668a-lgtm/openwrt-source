@@ -1,0 +1,52 @@
+name: build-uboot-2022
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-uboot-2022.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout hanwckf/bl-mt798x
+        uses: actions/checkout@v4
+        with:
+          repository: hanwckf/bl-mt798x
+          ref: master
+          path: uboot
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu build-essential flex bison \
+            libssl-dev device-tree-compiler python3 qemu-user-static
+
+      - name: Switch to U-Boot 2022.07 tree
+        working-directory: uboot
+        run: |
+          python3 - <<'EOF'
+          import re, pathlib
+          p = pathlib.Path('build.sh')
+          s = p.read_text()
+          s = re.sub(r'^#?UBOOT_DIR=.*$', 'UBOOT_DIR=uboot-mtk-20220606', s, flags=re.M)
+          s = re.sub(r'^#?ATF_DIR=.*$',   'ATF_DIR=atf-20220606-637ba581b', s, flags=re.M)
+          p.write_text(s)
+          print([l for l in s.splitlines() if 'DIR=' in l][:4])
+          EOF
+
+      - name: Build U-Boot 2022.07 for cmcc_xr30
+        working-directory: uboot
+        run: SOC=mt7981 BOARD=cmcc_xr30 ./build.sh
+
+      - name: Show outputs
+        working-directory: uboot
+        run: ls -l output/ && sha256sum output/* || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: uboot-2022-cmcc_xr30
+          path: uboot/output/*
+          if-no-files-found: error
