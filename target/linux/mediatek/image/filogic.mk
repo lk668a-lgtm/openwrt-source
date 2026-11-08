@@ -244,7 +244,9 @@ define Device/cmcc_xr30-nand
   DEVICE_DTS := mt7981b-cmcc-xr30-nand
   SUPPORTED_DEVICES := cmcc,xr30-nand
   DEVICE_DTS_DIR := ../dts
-  DEVICE_PACKAGES := kmod-usb3
+  # 与 .itb 版（cmcc_xr30）保持完全一致的功能：WiFi 驱动/固件 + USB + 挂载工具
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware kmod-usb3 \
+	automount f2fsck mkf2fs
   UBINIZE_OPTS := -E 5
   BLOCKSIZE := 128k
   PAGESIZE := 2048
