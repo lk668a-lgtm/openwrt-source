@@ -129,6 +129,9 @@ jobs:
           cat > .config <<'EOF'
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
+          # 设备符号的命名约定在 OpenWrt 里对带 '-' 的机型可能是 '-' 也可能是 '_'，
+          # 两种都写进去（Kconfig 会忽略不认识的那个），下面用正则断言其一命中即可。
+          CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_xr30-nand=y
           CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_xr30_nand=y
           CONFIG_TARGET_ROOTFS_SQUASHFS=y
           CONFIG_TARGET_ROOTFS_PARTSIZE=104
@@ -157,7 +160,9 @@ jobs:
           fi
           make defconfig
           echo "=== 机型断言 ==="
-          grep -q 'CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_xr30_nand=y' .config || { echo "::error::没选中 cmcc_xr30_nand"; exit 1; }
+          echo "--- 实际可选的 cmcc 机型："
+          grep -oE 'CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc[a-z0-9_-]*=y' .config || true
+          grep -qE 'CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_xr30[-_]nand=y' .config             || { echo "::error::没选中 cmcc_xr30-nand（见上面列出的可选机型）"; exit 1; }
           grep -q 'CONFIG_TARGET_MULTI_PROFILE=y' .config && { echo "::error::MULTI_PROFILE 被打开"; exit 1; }
           if [ "${{ matrix.variant }}" = "full" ]; then
             grep -q 'CONFIG_PACKAGE_luci-app-tkproxy=y' .config || { echo "::error::插件没被选中"; exit 1; }
