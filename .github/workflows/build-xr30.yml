@@ -78,7 +78,7 @@ jobs:
         run: |
           set -e
           cd immortalwrt-imagebuilder-*
-          make image PROFILE=cmcc_rax3000m PACKAGES="luci luci-compat curl ca-bundle xray-core luci-lua-runtime libuci-lua ip-full nftables firewall4 kmod-nft-tproxy kmod-nft-socket kmod-nf-tproxy kmod-veth" FILES=/tmp/files-install > /tmp/ib.log 2>&1 || { tail -40 /tmp/ib.log; exit 1; }
+          make image PROFILE=cmcc_rax3000m PACKAGES="luci luci-compat curl ca-bundle xray-core luci-lua-runtime libuci-lua ip-full nftables firewall4 kmod-nft-tproxy kmod-nft-socket kmod-nf-tproxy kmod-veth luci-app-passwall" FILES=/tmp/files-install > /tmp/ib.log 2>&1 || { tail -40 /tmp/ib.log; exit 1; }
           tail -15 /tmp/ib.log
           ls -l bin/targets/mediatek/filogic/*.itb
 
