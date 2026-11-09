@@ -1,0 +1,30 @@
+#!/bin/sh
+# Buer-Wrt：默认关闭 WAN 的 IPv6（wan6）
+#
+# 为什么必须关：
+# 某些上游/运营商环境下，odhcp6c 起来后立刻报 "ubus error: Invalid argument" 并
+# 判定 lost connection，netifd 于是按 1 秒一轮地 down → setup → up 循环。
+# 每一轮都会触发 dhcpv6.script、firewall4 重载、sysntpd reload，
+# 双核 MT7981 直接被顶到 88% 用户态、load 8~9、0% idle ——
+# 后果是 hostapd 抢不到 CPU，认证帧回不了 ACK，手机端表现就是
+# 「信号满格、就是连不上」，日志里刷 did not acknowledge authentication response。
+#
+# 本产品的线路本来就是纯 IPv4（每 SSID 一个 /24 + IPv4 tproxy），
+# 且明确要求不能有 IPv6 泄漏，所以 WAN 侧 IPv6 没有任何用处，直接关掉最稳。
+
+[ -f /etc/config/network ] || exit 0
+
+if uci -q get network.wan6 >/dev/null 2>&1; then
+	uci set network.wan6.disabled='1'
+	uci -q delete network.wan6.proto 2>/dev/null
+	uci commit network
+fi
+
+# 顺手把 lan 侧的 DHCPv6/RA 关掉，避免客户端拿到 IPv6 地址后再去试 AAAA
+if uci -q get dhcp.lan >/dev/null 2>&1; then
+	uci set dhcp.lan.dhcpv6='disabled'
+	uci set dhcp.lan.ra='disabled'
+	uci commit dhcp
+fi
+
+exit 0
