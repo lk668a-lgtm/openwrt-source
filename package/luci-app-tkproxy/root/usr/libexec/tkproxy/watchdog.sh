@@ -185,6 +185,20 @@ heal_probe_leftover() {
 	logger -t tkproxy "守护：清理残留探针网卡：$_left"
 }
 
+# 死节点自动替换：每 30 分钟跑一次，把出口取不到 IP 的线路换到体检 OK 的空闲节点。
+# 节点（尤其免费/机场节点）会不定时失效，客户看到的就是「某条 WiFi 连上打不开网页」。
+# 放后台跑，避免阻塞其它自愈；用时间戳限流，失败也不会刷屏。
+heal_nodes() {
+	_stamp=/tmp/tkproxy/.node_heal
+	if [ -f "$_stamp" ]; then
+		_last=$(stat -c %Y "$_stamp" 2>/dev/null || echo 0)
+		[ $(( $(date +%s) - ${_last:-0} )) -lt 1800 ] && return 0
+	fi
+	touch "$_stamp"
+	logger -t tkproxy "守护：开始死节点自动替换"
+	( lua /usr/libexec/tkproxy/node-heal.lua >>/tmp/tkproxy/node-heal.log 2>&1 ) &
+}
+
 _fixed=0
 # 开机头 1 分钟：每 10 秒拉一次接口和 DNS，抢在客户拿手机之前就绪
 # （netifd 并发建桥会抢设备失败，隔几秒重试就成；DNS 桥也可能先起来但绑不到晚到的桥）
@@ -208,6 +222,7 @@ while true; do
 	# 默认路由与部署无关：没部署过也要能上网（激活、升级都要它）
 	heal_route
 	heal_probe_leftover
+	heal_nodes
 	[ -f "$NFT_FILE" ] || continue
 
 	# 维护中（stop/卸载/升级）：不要和 stop 互斗

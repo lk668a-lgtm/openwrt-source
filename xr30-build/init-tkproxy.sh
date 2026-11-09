@@ -52,6 +52,10 @@ port_up() {
 }
 
 watchdog() {
+	# 已经由 procd 托管的 tkheal 看护时，这里不再自己起，避免跑两份互相抢
+	if [ -x /etc/rc.d/S99tkheal ]; then
+		return 0
+	fi
 	# 守护进程独立成脚本 + setsid 启动：原来的 `( ... ) &` 和 procd 服务在同一
 	# 进程组，服务 restart 时被连带杀掉，重启后 DNS 桥就再没人拉起来。
 	if [ -s /var/run/tkproxy-watchdog.pid ] && kill -0 "$(cat /var/run/tkproxy-watchdog.pid 2>/dev/null)" 2>/dev/null; then

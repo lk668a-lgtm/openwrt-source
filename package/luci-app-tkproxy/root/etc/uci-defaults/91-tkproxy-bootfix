@@ -2,4 +2,6 @@
 # 让开机校时与 WAN 自适应随系统启动（固件内嵌与单独装插件都要生效）
 [ -x /etc/init.d/tkclock ] && /etc/init.d/tkclock enable 2>/dev/null
 [ -x /etc/init.d/tkwan ] && /etc/init.d/tkwan enable 2>/dev/null
+# 自愈守护交给 procd 看护（挂了 5 秒自动重拉）
+[ -x /etc/init.d/tkheal ] && /etc/init.d/tkheal enable 2>/dev/null
 exit 0

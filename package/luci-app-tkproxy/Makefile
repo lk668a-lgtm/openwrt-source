@@ -2,7 +2,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-tkproxy
-PKG_VERSION:=3.15.18
+PKG_VERSION:=3.15.19
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-3.0
 PKG_MAINTAINER:=tkproxy <tkproxy@localhost>

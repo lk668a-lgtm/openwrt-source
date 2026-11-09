@@ -100,6 +100,38 @@ if #listeners == 0 then
 end
 log("监听 %d 条线路，上游 %s:%d（TCP）", #listeners, UPSTREAM_IP, UPSTREAM_PORT)
 
+-- 解析查询里的 QTYPE，返回 qtype 与问题段结束位置（跳过 qname 标签）
+local function qtype_of(msg)
+	-- DNS 头固定 12 字节（1..12），问题段从第 13 字节开始
+	local i = 13
+	while i <= #msg do
+		local b = msg:byte(i)
+		if not b then return nil, nil end
+		if b == 0 then
+			if i + 4 > #msg then return nil, nil end
+			return msg:byte(i + 1) * 256 + msg:byte(i + 2), i + 4
+		end
+		if b >= 192 then
+			if i + 4 > #msg then return nil, nil end
+			return msg:byte(i + 2) * 256 + msg:byte(i + 3), i + 4
+		end
+		i = i + 1 + b
+	end
+	return nil, nil
+end
+
+-- AAAA(28) 直接回空答案（NOERROR / 0 条记录）。
+-- 原因：线路只给 IPv4，客户端拿到 AAAA 会先试 IPv6、超时后再回退，
+-- 表现就是「WiFi 连上了但网页半天打不开」。不查 AAAA 比查了再丢弃更快也更稳。
+local function reply_empty_v6(sock, cli_addr, cli_port, query)
+	local _, qend = qtype_of(query)
+	if not qend or #query < qend then return false end
+	local hdr = query:sub(1, 2) .. string.char(0x81, 0x80) ..
+		string.char(0, 1, 0, 0, 0, 0, 0, 0)
+	sock:sendto(hdr .. query:sub(13, qend), cli_addr, cli_port)
+	return true
+end
+
 -- 子进程：阻塞完成一次 TCP DNS 查询
 local function serve_one(sock, cli_addr, cli_port, line, query)
 	local tcp = nixio.socket("inet", "stream")
@@ -149,6 +181,11 @@ while true do
 			if rev and rev > 0 then
 				local data, addr, port = L.sock:recvfrom(2048)
 				if data and type(data) ~= "boolean" and #data > 0 and addr then
+					local qt = qtype_of(data)
+					if qt == 28 then
+						-- AAAA：就地回空答案，不转发、不 fork
+						reply_empty_v6(L.sock, addr, port, data)
+					else
 					local pid = nixio.fork()
 					if pid == 0 then
 						for _, other in ipairs(listeners) do
@@ -156,6 +193,7 @@ while true do
 						end
 						local ok = serve_one(L.sock, addr, port, L.line, data)
 						os.exit(ok and 0 or 1)
+					end
 					end
 				end
 			end
