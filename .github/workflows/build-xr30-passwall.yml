@@ -79,7 +79,7 @@ jobs:
           fi
           ls -l
           tar xzf data.tar.gz -C /tmp/files-install
-          VER=$(cat /tmp/files-install/usr/share/tkproxy/VERSION)
+          VER=$(tr -d '\r\n' < /tmp/files-install/usr/share/tkproxy/VERSION)  # 文件是 CRLF，必须去掉 \r
           echo "插件版本：$VER"
           [ "$VER" = "3.15.42" ] || { echo "::error::插件版本不是 3.15.42，实际 $VER"; exit 1; }
           chmod +x /tmp/files-install/etc/init.d/* 2>/dev/null || true
