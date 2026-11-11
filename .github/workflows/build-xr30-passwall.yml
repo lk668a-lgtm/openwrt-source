@@ -45,6 +45,40 @@ jobs:
           echo "文件数：$(find /tmp/files-install -type f | wc -l)"
           test -f /tmp/files-install/usr/libexec/tkproxy/watchdog.sh || { echo "::error::插件里没有 watchdog.sh"; exit 1; }
 
+      - name: 用 luci-app-tkproxy 3.15.42 的 ipk 覆盖插件（去掉源码树里的旧文件）
+        run: |
+          set -e
+          IPK=$(ls xr30-build/pkgs/luci-app-tkproxy_3.15.42-1_all.ipk)
+          sha256sum "$IPK"
+          echo "a0b33f6fc1456e356283d0fd9bcf797585d64aa49149c97e63bff7709c306ea8  $IPK" | sha256sum -c - || { echo "::error::ipk sha256 不匹配"; exit 1; }
+          # 先把源码树复制进来的旧插件文件删干净，避免版本混杂
+          rm -rf /tmp/files-install/usr/libexec/tkproxy \
+                 /tmp/files-install/usr/lib/lua/luci/model/tkproxy \
+                 /tmp/files-install/usr/lib/lua/luci/view/tkproxy \
+                 /tmp/files-install/usr/lib/lua/luci/controller/tkproxy.lua \
+                 /tmp/files-install/usr/lib/lua/luci/controller/tkproxy_bind.lua \
+                 /tmp/files-install/usr/lib/lua/luci/controller/tkproxy_preflight.lua \
+                 /tmp/files-install/usr/share/tkproxy \
+                 /tmp/files-install/usr/share/luci/menu.d/luci-app-tkproxy.json \
+                 /tmp/files-install/usr/share/rpcd/acl.d/luci-app-tkproxy.json \
+                 /tmp/files-install/www/luci-static/resources/tkproxy \
+                 /tmp/files-install/www/luci-static/resources/view/tkproxy
+          rm -f  /tmp/files-install/etc/uci-defaults/90-tkproxy-update \
+                 /tmp/files-install/etc/uci-defaults/91-tkproxy-bootfix \
+                 /tmp/files-install/etc/uci-defaults/99-tkproxy-argon-light
+          # 解包 ipk：ar 归档 → data.tar.gz → 铺到 FILES 目录
+          rm -rf /tmp/ipkx && mkdir -p /tmp/ipkx
+          command -v ar >/dev/null 2>&1 || sudo apt-get install -y -qq binutils
+          cd /tmp/ipkx && ar x "$GITHUB_WORKSPACE/$IPK"
+          tar xzf data.tar.gz -C /tmp/files-install
+          VER=$(cat /tmp/files-install/usr/share/tkproxy/VERSION)
+          echo "插件版本：$VER"
+          [ "$VER" = "3.15.42" ] || { echo "::error::插件版本不是 3.15.42，实际 $VER"; exit 1; }
+          chmod +x /tmp/files-install/etc/init.d/* 2>/dev/null || true
+          find /tmp/files-install/usr/libexec/tkproxy -name '*.sh' -o -name '*.lua' | xargs -r chmod +x
+          ls -l /tmp/files-install/etc/init.d/tkproxy /tmp/files-install/usr/share/tkproxy/VERSION
+          grep -c . /tmp/files-install/usr/libexec/tkproxy/apply.sh
+
       - name: 注入 Xray-core 26.11.9（官方 arm64-v8a 静态二进制）
         run: |
           set -e
