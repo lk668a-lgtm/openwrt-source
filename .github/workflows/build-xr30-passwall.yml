@@ -1,0 +1,87 @@
+name: BUER-WRT XR30 PassWall(25.12.16)
+
+# 目的：出「内置老版 PassWall」的 XR30 固件。
+# 为什么用 24.10.3 基底：老版 PassWall 25.12.16 只存在于 24.10 的软件源；
+# 25.12 源里只有 26.10.29（新版，界面是两页那种）。老版按 LuCI 24.10 编写，
+# 在 24.10 基底下界面与行为才完整正常。
+#
+# 快车道：官方 ImageBuilder（预编译内核 + 包仓库），约 5~10 分钟出 itb。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [buer-wrt]
+    paths:
+      - '.github/workflows/build-xr30-passwall.yml'
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  build-passwall:
+    runs-on: ubuntu-22.04
+    name: imagebuilder-2410-passwall
+    steps:
+      - name: 检出构建仓
+        uses: actions/checkout@v4
+
+      - name: 下载并解压 ImageBuilder 24.10.3
+        run: |
+          set -e
+          URL=https://downloads.immortalwrt.org/releases/24.10.3/targets/mediatek/filogic/immortalwrt-imagebuilder-24.10.3-mediatek-filogic.Linux-x86_64.tar.zst
+          curl -sSL -o ib.tar.zst "$URL"
+          sudo apt-get update -qq && sudo apt-get install -y -qq zstd
+          tar --use-compress-program=unzstd -xf ib.tar.zst
+          ls -d immortalwrt-imagebuilder-*
+
+      - name: 组装内置文件树（tkproxy 插件 + Argon 主题 + 品牌）
+        run: |
+          set -e
+          sh xr30-build/make-files.sh /tmp/files-install
+          echo "文件数：$(find /tmp/files-install -type f | wc -l)"
+          test -f /tmp/files-install/usr/libexec/tkproxy/watchdog.sh || { echo "::error::插件里没有 watchdog.sh"; exit 1; }
+
+      - name: 构建镜像（内置 PassWall 25.12.16）
+        run: |
+          set -e
+          cd immortalwrt-imagebuilder-*
+          PKGS="luci luci-compat curl ca-bundle xray-core luci-lua-runtime libuci-lua ip-full nftables firewall4 kmod-nft-tproxy kmod-nft-socket kmod-nf-tproxy kmod-veth luci-app-passwall luci-i18n-passwall-zh-cn"
+          echo "PACKAGES=$PKGS"
+          make image PROFILE=cmcc_rax3000m PACKAGES="$PKGS" FILES=/tmp/files-install > /tmp/ib.log 2>&1 || { echo "::error::构建失败"; tail -60 /tmp/ib.log; exit 1; }
+          echo "--- 构建日志（包相关）---"
+          grep -iE "passwall|Installing|Configuring" /tmp/ib.log | tail -25 || true
+          echo "--- 产物 ---"
+          ls -lh bin/targets/mediatek/filogic/*.itb
+          echo "--- 清单校验（必须是 25.12.16）---"
+          MAN=$(ls bin/targets/mediatek/filogic/*.manifest | head -1)
+          grep -iE "passwall|luci-app-tkproxy|argon" "$MAN" || true
+          grep -qi "luci-app-passwall - 25.12.16" "$MAN" || { echo "::error::镜像里不是 25.12.16 版 PassWall"; grep -i passwall "$MAN" || true; exit 1; }
+
+      - name: 发布到 Release（公开可下载）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cd immortalwrt-imagebuilder-*
+          ITB=$(ls bin/targets/mediatek/filogic/*cmcc_rax3000m*squashfs-sysupgrade.itb | head -1)
+          TS=$(date +%Y%m%d-%H%M%S)
+          TAG="pw-$TS"
+          SZ=$(stat -c %s "$ITB")
+          REL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/releases \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"BUER-WRT XR30 内置PassWall 25.12.16 $TS\",\"body\":\"基底 ImmortalWrt 24.10.3，profile cmcc_rax3000m，内置 luci-app-passwall 25.12.16-r1 + 中文包 + tkproxy + Argon。sha=${{ github.sha }}\"}")
+          UP=$(echo "$REL" | jq -r .upload_url | sed 's/{?name,label}//')
+          case "$UP" in http*) ;; *) echo "::error::建 release 失败：$(echo "$REL" | jq -r .message)"; exit 1 ;; esac
+          URL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
+            --data-binary @"$ITB" "$UP?name=buer-wrt-xr30-passwall-$TS.itb" | jq -r '.browser_download_url // .message')
+          echo "下载地址：$URL"
+          echo "产物大小：$SZ 字节"
+
+      - name: 保存产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: xr30-passwall-itb
+          path: immortalwrt-imagebuilder-*/bin/targets/mediatek/filogic/*.itb
