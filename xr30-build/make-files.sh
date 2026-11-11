@@ -71,6 +71,17 @@ exit 0
 EOF
 chmod +x "$OUT/etc/uci-defaults/98-buer-wrt-fw4-cleanup"
 
+# uhttpd 默认 script_timeout=60，导节点/批量部署这类长请求会被网关提前掐断（499/超时）。
+# 首启改成 180 秒，客户装完即生效。
+cat > "$OUT/etc/uci-defaults/97-buer-wrt-uhttpd-timeout" <<'EOF'
+#!/bin/sh
+uci -q set uhttpd.main.script_timeout='180'
+uci -q set uhttpd.main.max_requests='100'
+uci -q commit uhttpd
+exit 0
+EOF
+chmod +x "$OUT/etc/uci-defaults/97-buer-wrt-uhttpd-timeout"
+
 
 # 插件依赖 /etc/config/tkproxy 存在（不存在时 uci set 会报 Entry not found，
 # 首启脚本就会写不进默认更新源）——包里没带这个文件，这里补一个空配置。
