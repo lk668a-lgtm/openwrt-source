@@ -68,8 +68,16 @@ jobs:
                  /tmp/files-install/etc/uci-defaults/99-tkproxy-argon-light
           # 解包 ipk：ar 归档 → data.tar.gz → 铺到 FILES 目录
           rm -rf /tmp/ipkx && mkdir -p /tmp/ipkx
-          command -v ar >/dev/null 2>&1 || sudo apt-get install -y -qq binutils
-          cd /tmp/ipkx && ar x "$GITHUB_WORKSPACE/$IPK"
+          cd /tmp/ipkx
+          # 这个 ipk 是 tar.gz 打包（不是 Debian ar），按魔数自动判断
+          if tar tzf "$GITHUB_WORKSPACE/$IPK" >/dev/null 2>&1; then
+            echo "ipk 格式: tar.gz"
+            tar xzf "$GITHUB_WORKSPACE/$IPK"
+          else
+            echo "ipk 格式: ar"
+            ar x "$GITHUB_WORKSPACE/$IPK"
+          fi
+          ls -l
           tar xzf data.tar.gz -C /tmp/files-install
           VER=$(cat /tmp/files-install/usr/share/tkproxy/VERSION)
           echo "插件版本：$VER"
