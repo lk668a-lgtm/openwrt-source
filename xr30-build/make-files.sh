@@ -59,6 +59,18 @@ exit 0
 EOF
 chmod +x "$OUT/etc/uci-defaults/99-buer-wrt-imagebuilder"
 
+# fw4 下 passwall 包留下的两个 fw3 时代 include 段（指向 /var/etc/passwall.include）会被 fw4 忽略并告警：
+#   "option 'reload' is not supported by fw4" / "specifies unreachable path"
+# 首启时删掉，客户自检就不会看到这条兼容性提示。
+cat > "$OUT/etc/uci-defaults/98-buer-wrt-fw4-cleanup" <<'EOF'
+#!/bin/sh
+uci -q delete firewall.passwall
+uci -q delete firewall.passwall_server
+uci -q commit firewall
+exit 0
+EOF
+chmod +x "$OUT/etc/uci-defaults/98-buer-wrt-fw4-cleanup"
+
 
 # 插件依赖 /etc/config/tkproxy 存在（不存在时 uci set 会报 Entry not found，
 # 首启脚本就会写不进默认更新源）——包里没带这个文件，这里补一个空配置。
