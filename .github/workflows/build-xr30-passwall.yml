@@ -44,7 +44,21 @@ jobs:
           echo "文件数：$(find /tmp/files-install -type f | wc -l)"
           test -f /tmp/files-install/usr/libexec/tkproxy/watchdog.sh || { echo "::error::插件里没有 watchdog.sh"; exit 1; }
 
-      - name: 构建镜像（内置 PassWall 25.12.16）
+      - name: 注入 Xray-core 26.11.9（官方 arm64-v8a 静态二进制）
+        run: |
+          set -e
+          cd /tmp
+          ZURL=https://github.com/XTLS/Xray-core/releases/download/v26.11.9/Xray-linux-arm64-v8a.zip
+          curl -sSL --retry 3 --max-time 300 -o xray.zip "$ZURL"
+          echo "64ed6858982a7f5eb85d88b811089063bd4f17561f4c8f44e0f1dc8e6f6430be  xray.zip" | sha256sum -c - || { echo "::error::xray zip sha256 不匹配"; exit 1; }
+          unzip -o -q xray.zip xray -d xray-extract
+          install -m 0755 xray-extract/xray /tmp/files-install/usr/bin/xray
+          SZ=$(stat -c %s /tmp/files-install/usr/bin/xray)
+          echo "注入的 xray 大小：$SZ 字节（期望 32964732）"
+          [ "$SZ" -eq 32964732 ] || { echo "::error::xray 二进制大小异常"; exit 1; }
+          sha256sum /tmp/files-install/usr/bin/xray
+
+      - name: 构建镜像（内置 PassWall 25.12.16 + Xray 26.11.9）
         run: |
           set -e
           cd immortalwrt-imagebuilder-*
@@ -72,15 +86,15 @@ jobs:
           cd immortalwrt-imagebuilder-*
           ITB=$(ls bin/targets/mediatek/filogic/*cmcc_rax3000m*squashfs-sysupgrade.itb | head -1)
           TS=$(date +%Y%m%d-%H%M%S)
-          TAG="pw-$TS"
+          TAG="pwx-$TS"
           SZ=$(stat -c %s "$ITB")
           REL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/releases \
-            -d "{\"tag_name\":\"$TAG\",\"name\":\"BUER-WRT XR30 内置PassWall 25.12.16 $TS\",\"body\":\"基底 ImmortalWrt 24.10.3，profile cmcc_rax3000m，内置 luci-app-passwall 25.12.16-r1 + 中文包 + tkproxy + Argon。sha=${{ github.sha }}\"}")
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"BUER-WRT XR30 PassWall25.12.16 + Xray26.11.9 $TS\",\"body\":\"基底 ImmortalWrt 24.10.3，profile cmcc_rax3000m；luci-app-passwall 25.12.16-r1 + 中文包；Xray-core 26.11.9（官方 arm64-v8a 静态二进制，zip sha256 64ed6858…30be，解出 32964732 字节）；tkproxy + Argon。sha=${{ github.sha }}\"}")
           UP=$(echo "$REL" | jq -r .upload_url | sed 's/{?name,label}//')
           case "$UP" in http*) ;; *) echo "::error::建 release 失败：$(echo "$REL" | jq -r .message)"; exit 1 ;; esac
           URL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
-            --data-binary @"$ITB" "$UP?name=buer-wrt-xr30-passwall-$TS.itb" | jq -r '.browser_download_url // .message')
+            --data-binary @"$ITB" "$UP?name=buer-wrt-xr30-passwall-xray269-$TS.itb" | jq -r '.browser_download_url // .message')
           echo "下载地址：$URL"
           echo "产物大小：$SZ 字节"
 
