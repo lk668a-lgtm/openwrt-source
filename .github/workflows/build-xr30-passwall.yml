@@ -52,6 +52,7 @@ jobs:
           curl -sSL --retry 3 --max-time 300 -o xray.zip "$ZURL"
           echo "64ed6858982a7f5eb85d88b811089063bd4f17561f4c8f44e0f1dc8e6f6430be  xray.zip" | sha256sum -c - || { echo "::error::xray zip sha256 不匹配"; exit 1; }
           unzip -o -q xray.zip xray -d xray-extract
+          mkdir -p /tmp/files-install/usr/bin
           install -m 0755 xray-extract/xray /tmp/files-install/usr/bin/xray
           SZ=$(stat -c %s /tmp/files-install/usr/bin/xray)
           echo "注入的 xray 大小：$SZ 字节（期望 32964732）"
