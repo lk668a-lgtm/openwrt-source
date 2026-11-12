@@ -74,9 +74,14 @@ jobs:
       - name: 解开 rootfs
         run: |
           set -e
-          unsquashfs -q -d rootfs work/sysupgrade-link_nn6000-v2/root
-          ls rootfs | head
+          # unsquashfs 在部分 xattr/符号链接情形会以非 0 退出但树是完整的，所以不拿退出码当判据，
+          # 解完用文件存在性 + 文件数断言。
+          unsquashfs -no-xattrs -d rootfs work/sysupgrade-link_nn6000-v2/root > /tmp/unsq.log 2>&1 || true
+          tail -5 /tmp/unsq.log
           test -d rootfs/usr/lib/ucode || { echo "::error::rootfs 解包异常"; exit 1; }
+          test -x rootfs/sbin/init -o -f rootfs/sbin/init || { echo "::error::rootfs 里没有 /sbin/init"; exit 1; }
+          echo "解出文件数：$(find rootfs -xdev | wc -l)"
+          ls rootfs | head
 
       - name: 组装我们的文件树（插件 + Argon + 品牌）
         run: |
