@@ -148,7 +148,7 @@ jobs:
           set -e
           cd immortalwrt-imagebuilder-*
           # 插件 LUCI_DEPENDS 里的每一项都要点名：FILES 注入不解析依赖
-          PKGS="luci luci-compat luci-i18n-base-zh-cn curl ca-bundle luci-lua-runtime libuci-lua lua jshn jsonfilter ip-full nftables firewall4 kmod-nft-tproxy kmod-nft-socket kmod-nf-tproxy kmod-veth xray-core dnsmasq-full"
+          PKGS="luci luci-compat luci-i18n-base-zh-cn curl ca-bundle luci-lua-runtime libuci-lua lua jshn jsonfilter ip-full nftables firewall4 kmod-nft-tproxy kmod-nft-socket kmod-nf-tproxy kmod-veth xray-core dnsmasq-full ucode-mod-math"
           echo "PACKAGES=$PKGS"
           make image PROFILE=link_nn6000-v2 PACKAGES="$PKGS" FILES=/tmp/files-install > /tmp/ib.log 2>&1 \
             || { echo "::error::构建失败"; tail -80 /tmp/ib.log; exit 1; }
@@ -167,7 +167,7 @@ jobs:
           MAN=$(ls bin/targets/qualcommax/ipq60xx/*.manifest | head -1)
           echo "--- manifest 关键项 ---"
           grep -E '^luci |^luci-base|luci-compat|luci-lua-runtime|xray-core|kmod-nft-tproxy|kmod-nf-tproxy|kmod-nft-socket|kmod-veth|ip-full|nftables|dnsmasq-full|ipq-wifi-link_nn6000|kmod-fs-f2fs' "$MAN" || true
-          for p in luci-base luci-compat luci-lua-runtime libuci-lua lua jshn jsonfilter xray-core kmod-nft-tproxy kmod-nf-tproxy kmod-nft-socket kmod-veth kmod-fs-f2fs ip-full nftables-json dnsmasq-full ipq-wifi-link_nn6000; do
+          for p in luci-base luci-compat luci-lua-runtime ucode-mod-math libuci-lua lua jshn jsonfilter xray-core kmod-nft-tproxy kmod-nf-tproxy kmod-nft-socket kmod-veth kmod-fs-f2fs ip-full nftables-json dnsmasq-full ipq-wifi-link_nn6000; do
             grep -qE "^${p} " "$MAN" || { echo "::error::manifest 里缺 $p"; exit 1; }
           done
           echo "manifest 依赖齐全"

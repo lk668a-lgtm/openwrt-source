@@ -13,9 +13,22 @@
 
 # 1) 默认主题 = argon（仅当该键不存在时才设置，尊重用户/上游已有选择）
 # 出厂默认是 bootstrap；用户自己选过别的主题（不是 bootstrap）就尊重不动
-_cur_theme="$(uci -q get luci.main.mediaurlbase)"
-if [ -z "$_cur_theme" ] || [ "$_cur_theme" = "/luci-static/bootstrap" ]; then
-	uci set luci.main.mediaurlbase='/luci-static/argon'
+#
+# 硬前提：Argon 3.x 的 /usr/share/ucode/luci/argon-palette.uc 第一行就
+#   `import { pow } from 'math';`
+# 而 ucode 的 math 插件是独立包（ucode-mod-math）。基底里没装它时，任何 LuCI
+# 页面都会 500：
+#   Unable to compile module '/usr/share/ucode/luci/argon-palette.uc':
+#   Syntax error: Unable to resolve path for module 'math'
+# 实测踩过（NN6000/IPQ6000 snapshot 基底）：整机正常、只有网页全崩。
+# 所以这里先探一下模块在不在，不在就留在 bootstrap，宁可少个皮肤也不能让后台进不去。
+if [ -f /usr/lib/ucode/math.so ]; then
+	_cur_theme="$(uci -q get luci.main.mediaurlbase)"
+	if [ -z "$_cur_theme" ] || [ "$_cur_theme" = "/luci-static/bootstrap" ]; then
+		uci set luci.main.mediaurlbase='/luci-static/argon'
+	fi
+else
+	logger -t buer-wrt "未装 ucode-mod-math，Argon 主题会崩，保持 bootstrap 主题"
 fi
 
 # 2) 确保 themes 列表里有 Argon（重复设置无害）
