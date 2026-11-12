@@ -53,18 +53,27 @@ jobs:
         run: |
           set -e
           cd immortalwrt-imagebuilder-*
-          python3 - <<'PY'
+          echo "--- ImageBuilder 根目录 ---"
+          ls -1 | head -30
+          PROF=$(ls profiles.json .profiles.json 2>/dev/null | head -1 || true)
+          if [ -n "$PROF" ]; then
+            echo "profiles 文件: $PROF"
+            python3 - "$PROF" <<'PY' || true
           import json, sys
-          d = json.load(open('profiles.json'))
-          ps = d.get('profiles', {})
+          d = json.load(open(sys.argv[1]))
+          ps = d.get('profiles', {}) or d
           hit = sorted(k for k in ps if 'nn6000' in k)
           print('profiles:', len(ps), '| nn6000:', hit)
-          if 'link_nn6000-v2' not in ps:
-              print('::error::这个 ImageBuilder 里没有 link_nn6000-v2，机型不支持')
-              sys.exit(1)
-          print('images:', [i['name'] for i in ps['link_nn6000-v2']['images']])
+          if 'link_nn6000-v2' in ps:
+              print('images:', [i['name'] for i in ps['link_nn6000-v2']['images']])
           print('arch:', d.get('arch_packages'))
           PY
+          fi
+          echo "--- make info 里的机型 ---"
+          make info > /tmp/ib-info.txt 2>&1 || true
+          grep -i -B1 -A3 'nn6000' /tmp/ib-info.txt || true
+          grep -qi 'link_nn6000-v2' /tmp/ib-info.txt || { echo "::error::机型 link_nn6000-v2 不在这个 ImageBuilder 里"; tail -30 /tmp/ib-info.txt; exit 1; }
+          echo "机型确认：link_nn6000-v2"
 
       - name: 组装内置文件树（tkproxy 插件 + Argon 主题 + 品牌）
         run: |
