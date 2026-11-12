@@ -24,10 +24,24 @@ if uci -q get network.lan >/dev/null; then
 fi
 
 # ---------- 3. root 密码 = password ----------
-# 用 busybox passwd 从 stdin 设置（root 无密码装不上 SSH，必须设）
-if command -v passwd >/dev/null 2>&1; then
-	printf 'password\npassword\n' | passwd root >/dev/null 2>&1
+# 优先 chpasswd（非交互、任何基底都稳）；没有 chpasswd 才退回 busybox passwd 的 stdin 写法。
+# 教训（NN6000 / iStoreOS 底座实测）：iStoreOS 的 passwd 在非 TTY 下会直接打印
+#   "The password for root is unchanged." 并返回 0，于是刷完 root 还是空密码 —— 看起来"脚本跑了"，
+#   其实完全没设上。所以设完必须回读 /etc/shadow 断言，空密码就再补一次。
+_set_root_pw() {
+	if command -v chpasswd >/dev/null 2>&1; then
+		printf 'root:password\n' | chpasswd 2>/dev/null && return 0
+	fi
+	if command -v passwd >/dev/null 2>&1; then
+		printf 'password\npassword\n' | passwd root >/dev/null 2>&1
+	fi
+}
+_set_root_pw
+if grep -q '^root::' /etc/shadow 2>/dev/null; then
+	# 还空着：用固定 salt 的 MD5 直接写（openssl 不一定有，这里写死哈希）
+	sed -i 's|^root:[^:]*:|root:$1$x7k2$YwVDE..S9xq1h/e4OjlHI.:|' /etc/shadow 2>/dev/null
 fi
+logger -t buer-wrt "root 密码状态：$(grep '^root:' /etc/shadow | cut -c1-12)"
 
 # ---------- 4. 无线默认密码 12345678 ----------
 # 首次开机 /etc/config/wireless 可能还没生成，先生成
