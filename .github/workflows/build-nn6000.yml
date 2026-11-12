@@ -117,6 +117,18 @@ jobs:
           find /tmp/files-install/usr/libexec/tkproxy -type f | xargs -r chmod +x
           ls -l /tmp/files-install/etc/init.d/tkproxy /tmp/files-install/usr/share/tkproxy/VERSION
 
+      - name: 板型无关补丁：tkwan 用仓库源码覆盖 ipk 里的版本
+        run: |
+          set -e
+          # ipk 3.15.42 里的 tkwan 是 XR30 专用（写死 eth1/eth0）：
+          # 在 NN6000 这类 DSA 机器上，WAN 叫 wan、没有 eth0/eth1，
+          # 一旦 WAN 没在 45 秒内拿到地址，旧脚本会把 wan.device 写成不存在的 eth1，
+          # 结果整机断网。仓库源码里已改成板型无关，这里以源码为准覆盖 ipk 的版本。
+          install -m 0755 package/luci-app-tkproxy/root/etc/init.d/tkwan /tmp/files-install/etc/init.d/tkwan
+          grep -q '板型无关' /tmp/files-install/etc/init.d/tkwan || { echo "::error::tkwan 没被覆盖"; exit 1; }
+          if grep -q 'cur=eth1' /tmp/files-install/etc/init.d/tkwan; then echo "::error::tkwan 还是写死 eth1 的旧版"; exit 1; fi
+          sh -n /tmp/files-install/etc/init.d/tkwan && echo "tkwan 语法 OK，已是板型无关版本"
+
       - name: 注入 Xray-core 26.11.9（官方 arm64-v8a 静态二进制）
         run: |
           set -e

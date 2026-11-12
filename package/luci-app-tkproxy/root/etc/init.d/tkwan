@@ -1,14 +1,19 @@
 #!/bin/sh /etc/rc.common
 # tkproxy WAN 口自适应
 #
-# 为什么需要：这台机器有两个可用网口可以做 WAN —— eth1（1G，默认 WAN）和
+# 为什么需要：XR30 这类机器有两个可用网口可以做 WAN —— eth1（1G，默认 WAN）和
 # eth0（2.5G，默认不属于任何网络）。客户按物理位置随手插，插到 2.5G 口就
 # 「网口没有网」，上游进不来，表现为刷完固件无法激活、WiFi 也不上网。
 #
 # 关键教训：只看「有没有链路」就切口是危险的 —— 2.5G 口可能插着一台不回应
 # DHCP 的设备，切过去反而把本来好的 WAN 弄断（本地实测：切到 eth0 后
-# curl=000、ping 不通）。所以改成「先试后用」：按 eth1 → eth0 顺序实际
-# reload 并等地址，拿到地址才留下；都不行就退回 eth1，绝不把能用的 WAN 弄丢。
+# curl=000、ping 不通）。所以改成「先试后用」：按当前口 → 其他 ethN 顺序实际
+# reload 并等地址，拿到地址才留下；都不行就退回原口，绝不把能用的 WAN 弄丢。
+#
+# 板型无关（NN6000/IPQ6000 等 DSA 机器上 WAN 叫 wan、根本没有 eth0/eth1）：
+#   - 候选只取「当前口」+ 真的存在的 eth[0-9]* 网口，绝不写不存在的设备名；
+#   - 没有 eth* 的机器就只试当前口，失败只记日志，不动配置。
+# 判据（真机）：NN6000 上 `uci get network.wan.device` = wan，脚本不得把它改成 eth1。
 
 START=20
 STOP=96
@@ -28,14 +33,24 @@ start() {
 	(
 		sleep 45
 		cur=$(uci -q get network.wan.device)
-		[ -n "$cur" ] || cur=eth1
+		[ -n "$cur" ] || exit 0
 		# 已经能拿到地址就不动
 		has_ip "$cur" && exit 0
 
-		for cand in eth1 eth0; do
-			[ "$(cat /sys/class/net/$cand/carrier 2>/dev/null)" = "1" ] || continue
+		# 候选：当前口 + 真实存在且有链路的 eth[0-9]*（DSA 机器上通常一个都没有）
+		cands="$cur"
+		for _d in /sys/class/net/eth[0-9]*; do
+			_n=${_d##*/}
+			[ -d "$_d" ] || continue
+			[ "$_n" = "$cur" ] && continue
+			[ "$(cat "$_d/carrier" 2>/dev/null)" = "1" ] || continue
+			cands="$cands $_n"
+		done
+
+		for cand in $cands; do
+			[ -d "/sys/class/net/$cand" ] || continue
 			if has_ip "$cand"; then
-				set_wan "$cand"
+				[ "$cand" = "$cur" ] || set_wan "$cand"
 				exit 0
 			fi
 			set_wan "$cand"
@@ -50,10 +65,12 @@ start() {
 			done
 		done
 
-		# 都不行：退回默认口，避免把 WAN 留在死口上
-		if [ "$(uci -q get network.wan.device)" != "eth1" ]; then
-			set_wan eth1
-			logger -t tkwan "候选网口都取不到地址，已退回 eth1"
+		# 都不行：退回最初那个口（存在才写回，避免把 WAN 指到不存在的设备）
+		if [ -d "/sys/class/net/$cur" ]; then
+			[ "$(uci -q get network.wan.device)" = "$cur" ] || set_wan "$cur"
+			logger -t tkwan "候选网口都取不到地址，已退回 $cur"
+		else
+			logger -t tkwan "候选网口都取不到地址，当前口 $cur 不存在，保持配置不变"
 		fi
 	) >/dev/null 2>&1 &
 }
