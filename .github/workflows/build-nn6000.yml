@@ -163,18 +163,33 @@ jobs:
       - name: 发布到 Release（公开可下载）
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
         run: |
           set -e
           cd immortalwrt-imagebuilder-*
           IMG=$(ls bin/targets/qualcommax/ipq60xx/*link_nn6000-v2-squashfs-sysupgrade.bin | head -1)
           TS=$(date +%Y%m%d-%H%M%S)
-          TAG="nn6000-$TS"
           SHA256=$(sha256sum "$IMG" | awk '{print $1}')
           SZ=$(stat -c %s "$IMG")
-          BODY="Link NN6000 v1/v2（IPQ6000，eMMC）专用；基底 ImmortalWrt snapshot qualcommax/ipq60xx，profile link_nn6000-v2；内置 luci-app-tkproxy 3.15.42 + Xray-core 26.11.9（arm64-v8a 静态，32964732 字节）+ Argon 主题。sha=${{ github.sha }} size=$SZ sha256=$SHA256 刷法：上传到后台升级页或 sysupgrade -n（板名 link,nn6000-v2 已匹配）。"
+          python3 - "$TS" "$SHA256" "$SZ" "$COMMIT" > /tmp/rel.json <<'PY'
+          import json, sys
+          ts, sha256, sz, commit = sys.argv[1:5]
+          body = (
+              "适用机型：Link NN6000 v1/v2（高通 IPQ6000，eMMC，GPT：0:HLOS + rootfs）。\n\n"
+              "基底：ImmortalWrt snapshot qualcommax/ipq60xx，profile link_nn6000-v2（含 ipq-wifi-link_nn6000）。\n"
+              "内置：luci-app-tkproxy 3.15.42 + Xray-core 26.11.9（官方 arm64-v8a 静态二进制，32964732 字节）+ Argon 主题 + 品牌首启脚本。\n\n"
+              f"commit: {commit}\nsize: {sz} bytes\nsha256: {sha256}\n\n"
+              "刷法（当前 iStoreOS/OpenWrt 系统里）：\n"
+              "  1) 把本文件上传到后台「系统 - 备份/升级 - 刷写新固件」（不勾保留配置）\n"
+              "  2) 或 SSH：sysupgrade -n /tmp/<本文件>\n"
+              "板名已是 link,nn6000-v2，元数据校验能过；刷完管理地址变 192.168.8.1（root/password），WiFi 变 Buer-Wrt / Buer-Wrt-5G（12345678）。\n\n"
+              "注意：这是 snapshot 基底（无高通 NSS 硬件加速、无 iStoreOS 的 docker/tailscale）。"
+          )
+          print(json.dumps({"tag_name": "nn6000-" + ts, "name": "BUER-WRT NN6000 v2 " + ts, "body": body}))
+          PY
           REL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/releases" \
-            -d "$(python3 -c 'import json,os,sys; print(json.dumps({"tag_name":os.environ["TAG"],"name":"BUER-WRT NN6000 v2 "+os.environ["TS"],"body":os.environ["BODY"]}))' TAG="$TAG" TS="$TS" BODY="$BODY")")
+            --data-binary @/tmp/rel.json "https://api.github.com/repos/$REPO/releases")
           UP=$(echo "$REL" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("upload_url","").replace("{?name,label}",""))')
           case "$UP" in http*) ;; *) echo "::error::建 release 失败：$(echo "$REL" | head -c 300)"; exit 1 ;; esac
           URL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
