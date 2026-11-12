@@ -155,7 +155,7 @@ jobs:
           MAN=$(ls bin/targets/qualcommax/ipq60xx/*.manifest | head -1)
           echo "--- manifest 关键项 ---"
           grep -E '^luci |^luci-base|luci-compat|luci-lua-runtime|xray-core|kmod-nft-tproxy|kmod-nf-tproxy|kmod-nft-socket|kmod-veth|ip-full|nftables|dnsmasq-full|ipq-wifi-link_nn6000|kmod-fs-f2fs' "$MAN" || true
-          for p in luci-base luci-compat luci-lua-runtime libuci-lua xray-core kmod-nft-tproxy kmod-nf-tproxy kmod-nft-socket kmod-veth ip-full nftables dnsmasq-full ipq-wifi-link_nn6000; do
+          for p in luci-base luci-compat luci-lua-runtime libuci-lua lua jshn jsonfilter xray-core kmod-nft-tproxy kmod-nf-tproxy kmod-nft-socket kmod-veth kmod-fs-f2fs ip-full nftables-json dnsmasq-full ipq-wifi-link_nn6000; do
             grep -qE "^${p} " "$MAN" || { echo "::error::manifest 里缺 $p"; exit 1; }
           done
           echo "manifest 依赖齐全"
