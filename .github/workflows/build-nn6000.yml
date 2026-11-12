@@ -1,0 +1,181 @@
+name: BUER-WRT NN6000 (IPQ6000 / link_nn6000-v2)
+
+# 目的：给「Link NN6000 v2」（IPQ6000，eMMC，GPT：0:HLOS + rootfs）出一版内置
+# tkproxy 插件的 BUER-WRT 固件。
+#
+# 为什么是另一个 target：XR30 的固件是 mediatek/filogic（MT7981），与这颗高通
+# IPQ6000 的启动链、分区、内核完全不同，同一份 .itb/.bin 不可能通用。
+# 上游 immortalwrt / openwrt 的 qualcommax/ipq60xx 里已有 link_nn6000-v1/v2
+# 设备定义（Device/EmmcImage + ipq-wifi-link_nn6000），所以这条线走官方的
+# ImageBuilder 快车道：预编译内核 + 包仓库，装包 + 塞文件 + 打包，约 10 分钟。
+#
+# 产物：immortalwrt-qualcommax-ipq60xx-link_nn6000-v2-squashfs-sysupgrade.bin
+#       （在 iStoreOS / OpenWrt 系统里 sysupgrade 刷写，板名已匹配 link,nn6000-v2）
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [buer-wrt]
+    paths:
+      - '.github/workflows/build-nn6000.yml'
+      - 'xr30-build/**'
+      - 'files/**'
+
+concurrency:
+  group: nn6000-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  build-nn6000:
+    runs-on: ubuntu-22.04
+    name: imagebuilder-ipq60xx-nn6000v2
+    steps:
+      - name: 检出构建仓
+        uses: actions/checkout@v4
+
+      - name: 下载并解压 ImageBuilder（immortalwrt snapshot / qualcommax / ipq60xx）
+        run: |
+          set -e
+          URL=https://downloads.immortalwrt.org/snapshots/targets/qualcommax/ipq60xx/immortalwrt-imagebuilder-qualcommax-ipq60xx.Linux-x86_64.tar.zst
+          curl -sSL --retry 3 --max-time 600 -o ib.tar.zst "$URL"
+          ls -l ib.tar.zst
+          sudo apt-get update -qq && sudo apt-get install -y -qq zstd
+          tar --use-compress-program=unzstd -xf ib.tar.zst
+          ls -d immortalwrt-imagebuilder-*
+
+      - name: 断言 ImageBuilder 里有 link_nn6000-v2 机型
+        run: |
+          set -e
+          cd immortalwrt-imagebuilder-*
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('profiles.json'))
+          ps = d.get('profiles', {})
+          hit = sorted(k for k in ps if 'nn6000' in k)
+          print('profiles:', len(ps), '| nn6000:', hit)
+          if 'link_nn6000-v2' not in ps:
+              print('::error::这个 ImageBuilder 里没有 link_nn6000-v2，机型不支持')
+              sys.exit(1)
+          print('images:', [i['name'] for i in ps['link_nn6000-v2']['images']])
+          print('arch:', d.get('arch_packages'))
+          PY
+
+      - name: 组装内置文件树（tkproxy 插件 + Argon 主题 + 品牌）
+        run: |
+          set -e
+          sh xr30-build/make-files.sh /tmp/files-install
+          echo "文件数：$(find /tmp/files-install -type f | wc -l)"
+          test -f /tmp/files-install/usr/libexec/tkproxy/watchdog.sh || { echo "::error::插件里没有 watchdog.sh"; exit 1; }
+          test -f /tmp/files-install/usr/share/luci/menu.d/luci-app-tkproxy.json || { echo "::error::没有菜单 json"; exit 1; }
+
+      - name: 用 luci-app-tkproxy 3.15.42 的 ipk 覆盖插件（去掉源码树里的旧文件）
+        run: |
+          set -e
+          IPK=$(ls xr30-build/pkgs/luci-app-tkproxy_3.15.42-1_all.ipk)
+          sha256sum "$IPK"
+          echo "a0b33f6fc1456e356283d0fd9bcf797585d64aa49149c97e63bff7709c306ea8  $IPK" | sha256sum -c - || { echo "::error::ipk sha256 不匹配"; exit 1; }
+          rm -rf /tmp/files-install/usr/libexec/tkproxy \
+                 /tmp/files-install/usr/lib/lua/luci/model/tkproxy \
+                 /tmp/files-install/usr/lib/lua/luci/view/tkproxy \
+                 /tmp/files-install/usr/lib/lua/luci/controller/tkproxy.lua \
+                 /tmp/files-install/usr/lib/lua/luci/controller/tkproxy_bind.lua \
+                 /tmp/files-install/usr/lib/lua/luci/controller/tkproxy_preflight.lua \
+                 /tmp/files-install/usr/share/tkproxy \
+                 /tmp/files-install/usr/share/luci/menu.d/luci-app-tkproxy.json \
+                 /tmp/files-install/usr/share/rpcd/acl.d/luci-app-tkproxy.json \
+                 /tmp/files-install/www/luci-static/resources/tkproxy \
+                 /tmp/files-install/www/luci-static/resources/view/tkproxy
+          rm -f  /tmp/files-install/etc/uci-defaults/90-tkproxy-update \
+                 /tmp/files-install/etc/uci-defaults/91-tkproxy-bootfix \
+                 /tmp/files-install/etc/uci-defaults/99-tkproxy-argon-light
+          rm -rf /tmp/ipkx && mkdir -p /tmp/ipkx && cd /tmp/ipkx
+          if tar tzf "$GITHUB_WORKSPACE/$IPK" >/dev/null 2>&1; then
+            echo "ipk 格式: tar.gz"; tar xzf "$GITHUB_WORKSPACE/$IPK"
+          else
+            echo "ipk 格式: ar"; ar x "$GITHUB_WORKSPACE/$IPK"
+          fi
+          tar xzf data.tar.gz -C /tmp/files-install
+          VER=$(tr -d '\r\n' < /tmp/files-install/usr/share/tkproxy/VERSION)
+          echo "插件版本：$VER"
+          [ "$VER" = "3.15.42" ] || { echo "::error::插件版本不是 3.15.42，实际 $VER"; exit 1; }
+          chmod +x /tmp/files-install/etc/init.d/* 2>/dev/null || true
+          find /tmp/files-install/usr/libexec/tkproxy -type f | xargs -r chmod +x
+          ls -l /tmp/files-install/etc/init.d/tkproxy /tmp/files-install/usr/share/tkproxy/VERSION
+
+      - name: 注入 Xray-core 26.11.9（官方 arm64-v8a 静态二进制）
+        run: |
+          set -e
+          cd /tmp
+          ZURL=https://github.com/XTLS/Xray-core/releases/download/v26.11.9/Xray-linux-arm64-v8a.zip
+          curl -sSL --retry 3 --max-time 300 -o xray.zip "$ZURL"
+          echo "64ed6858982a7f5eb85d88b811089063bd4f17561f4c8f44e0f1dc8e6f6430be  xray.zip" | sha256sum -c - || { echo "::error::xray zip sha256 不匹配"; exit 1; }
+          unzip -o -q xray.zip xray -d xray-extract
+          mkdir -p /tmp/files-install/usr/bin
+          install -m 0755 xray-extract/xray /tmp/files-install/usr/bin/xray
+          SZ=$(stat -c %s /tmp/files-install/usr/bin/xray)
+          echo "注入的 xray 大小：$SZ 字节（期望 32964732）"
+          [ "$SZ" -eq 32964732 ] || { echo "::error::xray 二进制大小异常"; exit 1; }
+
+      - name: 构建镜像（NN6000 v2 + 内置 tkproxy + Xray 26.11.9）
+        run: |
+          set -e
+          cd immortalwrt-imagebuilder-*
+          # 插件 LUCI_DEPENDS 里的每一项都要点名：FILES 注入不解析依赖
+          PKGS="luci luci-compat luci-i18n-base-zh-cn curl ca-bundle luci-lua-runtime libuci-lua lua jshn jsonfilter ip-full nftables firewall4 kmod-nft-tproxy kmod-nft-socket kmod-nf-tproxy kmod-veth xray-core dnsmasq-full"
+          echo "PACKAGES=$PKGS"
+          make image PROFILE=link_nn6000-v2 PACKAGES="$PKGS" FILES=/tmp/files-install > /tmp/ib.log 2>&1 \
+            || { echo "::error::构建失败"; tail -80 /tmp/ib.log; exit 1; }
+          echo "--- 构建日志尾部 ---"
+          tail -30 /tmp/ib.log
+          echo "--- 产物 ---"
+          ls -lh bin/targets/qualcommax/ipq60xx/
+
+      - name: 校验产物
+        run: |
+          set -e
+          cd immortalwrt-imagebuilder-*
+          IMG=$(ls bin/targets/qualcommax/ipq60xx/*link_nn6000-v2-squashfs-sysupgrade.bin | head -1)
+          echo "IMG=$IMG"
+          SZ=$(stat -c %s "$IMG"); echo "产物大小：$SZ 字节"
+          MAN=$(ls bin/targets/qualcommax/ipq60xx/*.manifest | head -1)
+          echo "--- manifest 关键项 ---"
+          grep -E '^luci |^luci-base|luci-compat|luci-lua-runtime|xray-core|kmod-nft-tproxy|kmod-nf-tproxy|kmod-nft-socket|kmod-veth|ip-full|nftables|dnsmasq-full|ipq-wifi-link_nn6000|kmod-fs-f2fs' "$MAN" || true
+          for p in luci-base luci-compat luci-lua-runtime libuci-lua xray-core kmod-nft-tproxy kmod-nf-tproxy kmod-nft-socket kmod-veth ip-full nftables dnsmasq-full ipq-wifi-link_nn6000; do
+            grep -qE "^${p} " "$MAN" || { echo "::error::manifest 里缺 $p"; exit 1; }
+          done
+          echo "manifest 依赖齐全"
+
+      - name: 发布到 Release（公开可下载）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cd immortalwrt-imagebuilder-*
+          IMG=$(ls bin/targets/qualcommax/ipq60xx/*link_nn6000-v2-squashfs-sysupgrade.bin | head -1)
+          TS=$(date +%Y%m%d-%H%M%S)
+          TAG="nn6000-$TS"
+          SHA256=$(sha256sum "$IMG" | awk '{print $1}')
+          SZ=$(stat -c %s "$IMG")
+          BODY="Link NN6000 v1/v2（IPQ6000，eMMC）专用；基底 ImmortalWrt snapshot qualcommax/ipq60xx，profile link_nn6000-v2；内置 luci-app-tkproxy 3.15.42 + Xray-core 26.11.9（arm64-v8a 静态，32964732 字节）+ Argon 主题。sha=${{ github.sha }} size=$SZ sha256=$SHA256 刷法：上传到后台升级页或 sysupgrade -n（板名 link,nn6000-v2 已匹配）。"
+          REL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" \
+            -d "$(python3 -c 'import json,os,sys; print(json.dumps({"tag_name":os.environ["TAG"],"name":"BUER-WRT NN6000 v2 "+os.environ["TS"],"body":os.environ["BODY"]}))' TAG="$TAG" TS="$TS" BODY="$BODY")")
+          UP=$(echo "$REL" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("upload_url","").replace("{?name,label}",""))')
+          case "$UP" in http*) ;; *) echo "::error::建 release 失败：$(echo "$REL" | head -c 300)"; exit 1 ;; esac
+          URL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
+            --data-binary @"$IMG" "$UP?name=buer-wrt-nn6000-$TS-squashfs-sysupgrade.bin" \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("browser_download_url") or d.get("message"))')
+          echo "下载地址：$URL"
+          echo "sha256：$SHA256"
+
+      - name: 保存产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: nn6000-sysupgrade
+          path: immortalwrt-imagebuilder-*/bin/targets/qualcommax/ipq60xx/*link_nn6000-v2-squashfs-sysupgrade.bin
