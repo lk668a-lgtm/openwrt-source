@@ -1,0 +1,188 @@
+name: BUER-WRT NN6000 v2 (重打包 iStoreOS 底座 + 内置 tkproxy)
+
+# 背景（2026-11-13 真机结论）：
+#   自编的 ImmortalWrt snapshot 镜像在这台 Link NN6000 v2 上只有 WiFi 能用——
+#   DTB 用上游新写法（qualcomm,ipq6018-edma + ipq6018-ppe），驱动没起来，
+#   lan1-4/wan 五个 netdev 全都不存在（ubus: NO_DEVICE），有线端全废。
+#   社区那版 iStoreOS（wzdddyy/iStoreOS-NN6000，25.12 + 满血 NSS）在同一台机器上
+#   有线/无线都正常，且自带 tkproxy 需要的全部内核模块：
+#   nft_tproxy.ko / nf_tproxy_ipv4|6.ko / nf_socket_ipv4|6.ko / veth.ko。
+#
+# 所以这条流水线不再自己编内核，而是：拿那个**已验证可启动**的镜像当底座，
+# 把我们的插件、Argon 主题、品牌首启脚本打进它的 squashfs，再按原格式重新打包
+# （CONTROL + kernel + root，末尾原样带回 fwtool 元数据）。
+# 产物板名/元数据与设备一致（link,nn6000-v2），可直接 sysupgrade。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [buer-wrt]
+    paths:
+      - '.github/workflows/build-nn6000-istoreos.yml'
+      - 'xr30-build/**'
+      - 'files/**'
+      - 'package/luci-app-tkproxy/**'
+
+concurrency:
+  group: nn6000-isto-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Shanghai
+  BASE_URL: https://github.com/wzdddyy/iStoreOS-NN6000/releases/download/rel-LINK_NN6000-2026.11.11_16.36/2026.11.11_16.36-istoreos-qualcommax-ipq60xx-link_nn6000-v2-squashfs-sysupgrade.bin
+  BASE_SHA256: cb5199b998af445b99bf23758c25da1a2d0b8aa9e3f6ca7096f18df697204495
+
+jobs:
+  repack:
+    runs-on: ubuntu-22.04
+    name: repack-istoreos-nn6000v2
+    steps:
+      - name: 检出构建仓
+        uses: actions/checkout@v4
+
+      - name: 准备工具
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq squashfs-tools zstd curl jq
+
+      - name: 下载 iStoreOS NN6000 v2 底座并校验
+        run: |
+          set -e
+          curl -sSL --retry 3 --max-time 1800 -o base.bin "$BASE_URL"
+          ls -l base.bin
+          echo "$BASE_SHA256  base.bin" | sha256sum -c - || { echo "::error::底座镜像 sha256 不匹配"; exit 1; }
+
+      - name: 拆包（CONTROL / kernel / root + 尾部元数据）
+        run: |
+          set -e
+          mkdir -p work && cd work
+          tar xf ../base.bin
+          ls -l sysupgrade-link_nn6000-v2/
+          BOARD=$(cat sysupgrade-link_nn6000-v2/CONTROL)
+          echo "CONTROL=$BOARD"
+          [ "$BOARD" = "BOARD=link_nn6000-v2" ] || { echo "::error::底座板名不对：$BOARD"; exit 1; }
+          cd ..
+          python3 - <<'PY'
+          d = open('base.bin','rb').read()
+          i = d.rfind(b'metadata_version')
+          start = d.rfind(b'{', 0, i)
+          open('meta.tail','wb').write(d[start:])
+          print('元数据尾部', len(d) - start, '字节：', d[start:start+160].decode('utf-8','replace'))
+          PY
+
+      - name: 解开 rootfs
+        run: |
+          set -e
+          unsquashfs -q -d rootfs work/sysupgrade-link_nn6000-v2/root
+          ls rootfs | head
+          test -d rootfs/usr/lib/ucode || { echo "::error::rootfs 解包异常"; exit 1; }
+
+      - name: 组装我们的文件树（插件 + Argon + 品牌）
+        run: |
+          set -e
+          sh xr30-build/make-files.sh /tmp/files-install
+          echo "文件数：$(find /tmp/files-install -type f | wc -l)"
+
+      - name: 用 luci-app-tkproxy 3.15.42 的 ipk 覆盖插件
+        run: |
+          set -e
+          IPK=$(ls xr30-build/pkgs/luci-app-tkproxy_3.15.42-1_all.ipk)
+          echo "a0b33f6fc1456e356283d0fd9bcf797585d64aa49149c97e63bff7709c306ea8  $IPK" | sha256sum -c - || { echo "::error::ipk sha256 不匹配"; exit 1; }
+          rm -rf /tmp/files-install/usr/libexec/tkproxy /tmp/files-install/usr/share/tkproxy \
+                 /tmp/files-install/usr/share/luci/menu.d/luci-app-tkproxy.json \
+                 /tmp/files-install/usr/share/rpcd/acl.d/luci-app-tkproxy.json \
+                 /tmp/files-install/usr/lib/lua/luci/model/tkproxy /tmp/files-install/usr/lib/lua/luci/view/tkproxy \
+                 /tmp/files-install/usr/lib/lua/luci/controller/tkproxy*.lua
+          rm -f  /tmp/files-install/etc/uci-defaults/90-tkproxy-update /tmp/files-install/etc/uci-defaults/91-tkproxy-bootfix \
+                 /tmp/files-install/etc/uci-defaults/99-tkproxy-argon-light
+          rm -rf /tmp/ipkx && mkdir -p /tmp/ipkx && cd /tmp/ipkx
+          if tar tzf "$GITHUB_WORKSPACE/$IPK" >/dev/null 2>&1; then tar xzf "$GITHUB_WORKSPACE/$IPK"; else ar x "$GITHUB_WORKSPACE/$IPK"; fi
+          tar xzf data.tar.gz -C /tmp/files-install
+          VER=$(tr -d '\r\n' < /tmp/files-install/usr/share/tkproxy/VERSION)
+          echo "插件版本：$VER"
+          [ "$VER" = "3.15.42" ] || { echo "::error::插件版本不是 3.15.42（实际 $VER）"; exit 1; }
+
+      - name: 板型无关 tkwan 覆盖 ipk 版本
+        run: |
+          set -e
+          install -m 0755 package/luci-app-tkproxy/root/etc/init.d/tkwan /tmp/files-install/etc/init.d/tkwan
+          grep -q '板型无关' /tmp/files-install/etc/init.d/tkwan || { echo "::error::tkwan 没覆盖"; exit 1; }
+          sh -n /tmp/files-install/etc/init.d/tkwan
+
+      - name: 注入 Xray-core 26.11.9（arm64 静态）
+        run: |
+          set -e
+          cd /tmp
+          curl -sSL --retry 3 --max-time 300 -o xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.11.9/Xray-linux-arm64-v8a.zip
+          echo "64ed6858982a7f5eb85d88b811089063bd4f17561f4c8f44e0f1dc8e6f6430be  xray.zip" | sha256sum -c - || { echo "::error::xray zip sha256 不匹配"; exit 1; }
+          unzip -o -q xray.zip xray -d xray-extract
+          mkdir -p /tmp/files-install/usr/bin
+          install -m 0755 xray-extract/xray /tmp/files-install/usr/bin/xray
+          SZ=$(stat -c %s /tmp/files-install/usr/bin/xray)
+          echo "xray 大小 $SZ（期望 32964732）"
+          [ "$SZ" -eq 32964732 ] || { echo "::error::xray 大小异常"; exit 1; }
+
+      - name: 合并进 rootfs 并断言
+        run: |
+          set -e
+          cp -a /tmp/files-install/. rootfs/
+          chmod +x rootfs/etc/init.d/tkproxy rootfs/etc/init.d/tkclock rootfs/etc/init.d/tkwan rootfs/etc/init.d/tkheal 2>/dev/null || true
+          find rootfs/usr/libexec/tkproxy -type f -exec chmod +x {} + 2>/dev/null || true
+          for f in usr/libexec/tkproxy/watchdog.sh usr/libexec/tkproxy/apply.sh usr/libexec/tkproxy/license.sh \
+                   usr/share/luci/menu.d/luci-app-tkproxy.json etc/config/tkproxy etc/init.d/tkproxy \
+                   usr/bin/xray usr/share/tkproxy/VERSION etc/apk/keys/tkproxy.rsa.pub; do
+            [ -e "rootfs/$f" ] || { echo "::error::rootfs 里缺 $f"; exit 1; }
+          done
+          echo "插件文件齐全；底座自带的内核模块："
+          ls rootfs/lib/modules/*/ | grep -E 'nft_tproxy|nf_tproxy|veth|nf_socket' || { echo "::error::底座缺 tproxy/veth 模块"; exit 1; }
+
+      - name: 重新打 squashfs + 打包 + 还原元数据
+        run: |
+          set -e
+          SZ0=$(stat -c %s work/sysupgrade-link_nn6000-v2/root)
+          mksquashfs rootfs work/sysupgrade-link_nn6000-v2/root.new -comp xz -b 262144 -noappend -all-root -no-progress > /tmp/mksq.log 2>&1 || { tail -20 /tmp/mksq.log; exit 1; }
+          mv work/sysupgrade-link_nn6000-v2/root.new work/sysupgrade-link_nn6000-v2/root
+          SZ1=$(stat -c %s work/sysupgrade-link_nn6000-v2/root)
+          echo "rootfs: $SZ0 -> $SZ1 字节"
+          cd work && tar -cf ../out.tar sysupgrade-link_nn6000-v2 && cd ..
+          cat meta.tail >> out.tar
+          SZ=$(stat -c %s out.tar); echo "产物 $SZ 字节"
+          python3 - <<'PY'
+          d=open('out.tar','rb').read()
+          assert d.rfind(b'metadata_version')>0, '元数据丢了'
+          assert b'link,nn6000-v2' in d[-512:], '尾部板名不对'
+          print('元数据校验通过')
+          PY
+          mv out.tar bwr-nn6000-v2.bin
+
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -e
+          TS=$(date +%Y%m%d-%H%M%S)
+          SHA256=$(sha256sum bwr-nn6000-v2.bin | awk '{print $1}')
+          SZ=$(stat -c %s bwr-nn6000-v2.bin)
+          python3 - "$TS" "$SHA256" "$SZ" "$COMMIT" > /tmp/rel.json <<'PY'
+          import json, sys
+          ts, sha256, sz, commit = sys.argv[1:5]
+          body = (
+              "适用机型：Link NN6000 v1/v2（IPQ6000，eMMC，GPT）。\n\n"
+              "基底：iStoreOS 25.12.6 for NN6000（wzdddyy 构建，满血 NSS，内核 6.12.112），"
+              "有线/无线均已在同型号真机验证可用；tkproxy 需要的内核模块（nft_tproxy/veth 等）底座自带。\n"
+              "内置：luci-app-tkproxy 3.15.42 + Xray-core 26.11.9（arm64 静态，32964732 B）+ Argon 主题 + 品牌首启（LAN 192.168.8.1 / root:password / WiFi Buer-Wrt|Buer-Wrt-5G 密码 12345678）。\n\n"
+              f"commit: {commit}\nsize: {sz} bytes\nsha256: {sha256}\n\n"
+              "刷法：后台「系统 - 备份/升级」上传本文件（不保留配置），或 SSH `sysupgrade -n <文件>`。\n"
+              "板名/元数据与设备一致（link,nn6000-v2）；内核与 DTB 用的是底座原版，未改动。"
+          )
+          print(json.dumps({"tag_name": "bwr-nn6000-" + ts, "name": "BUER-WRT NN6000 v2 (iStoreOS 底座) " + ts, "body": body}))
+          PY
+          REL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" --data-binary @/tmp/rel.json "https://api.github.com/repos/$REPO/releases")
+          UP=$(echo "$REL" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("upload_url","").replace("{?name,label}",""))')
+          case "$UP" in http*) ;; *) echo "::error::建 release 失败：$(echo "$REL" | head -c 300)"; exit 1 ;; esac
+          URL=$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" --data-binary @bwr-nn6000-v2.bin "$UP?name=buer-wrt-nn6000-v2-$TS-squashfs-sysupgrade.bin" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("browser_download_url") or d.get("message"))')
+          echo "下载地址：$URL"
+          echo "sha256：$SHA256"
