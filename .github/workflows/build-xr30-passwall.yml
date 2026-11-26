@@ -45,12 +45,12 @@ jobs:
           echo "文件数：$(find /tmp/files-install -type f | wc -l)"
           test -f /tmp/files-install/usr/libexec/tkproxy/watchdog.sh || { echo "::error::插件里没有 watchdog.sh"; exit 1; }
 
-      - name: 用 luci-app-tkproxy 3.15.42 的 ipk 覆盖插件（去掉源码树里的旧文件）
+      - name: 用 luci-app-tkproxy 3.16.14 的 ipk 覆盖插件（去掉源码树里的旧文件）
         run: |
           set -e
-          IPK=$(ls xr30-build/pkgs/luci-app-tkproxy_3.15.42-1_all.ipk)
+          IPK=$(ls xr30-build/pkgs/luci-app-tkproxy_3.16.14-1_all.ipk)
           sha256sum "$IPK"
-          echo "a0b33f6fc1456e356283d0fd9bcf797585d64aa49149c97e63bff7709c306ea8  $IPK" | sha256sum -c - || { echo "::error::ipk sha256 不匹配"; exit 1; }
+          echo "bb4535ddcdd63e763948145299aa052095a2a0c13edbfd2d4236eb40ad39dba0  $IPK" | sha256sum -c - || { echo "::error::ipk sha256 不匹配"; exit 1; }
           # 先把源码树复制进来的旧插件文件删干净，避免版本混杂
           rm -rf /tmp/files-install/usr/libexec/tkproxy \
                  /tmp/files-install/usr/lib/lua/luci/model/tkproxy \
@@ -81,7 +81,7 @@ jobs:
           tar xzf data.tar.gz -C /tmp/files-install
           VER=$(tr -d '\r\n' < /tmp/files-install/usr/share/tkproxy/VERSION)  # 文件是 CRLF，必须去掉 \r
           echo "插件版本：$VER"
-          [ "$VER" = "3.15.42" ] || { echo "::error::插件版本不是 3.15.42，实际 $VER"; exit 1; }
+          [ "$VER" = "3.16.14" ] || { echo "::error::插件版本不是 3.16.14，实际 $VER"; exit 1; }
           chmod +x /tmp/files-install/etc/init.d/* 2>/dev/null || true
           find /tmp/files-install/usr/libexec/tkproxy -name '*.sh' -o -name '*.lua' | xargs -r chmod +x
           ls -l /tmp/files-install/etc/init.d/tkproxy /tmp/files-install/usr/share/tkproxy/VERSION
