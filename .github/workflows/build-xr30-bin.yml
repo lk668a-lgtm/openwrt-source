@@ -6,18 +6,8 @@ name: BUER-WRT XR30 (BIN)
 # 免得版本漂移把驱动/包版本带偏。
 
 on:
-  push:
-    branches: [buer-wrt]
-    paths:
-      - 'xr30-build/**'
-      - 'xr30-build-bin/**'
-      # 设备定义/镜像规则改动也要重编（DEVICE_PACKAGES、IMAGES 之类都在这）
-      - 'target/linux/mediatek/**'
-      - 'package/luci-app-tkproxy/**'
-      - 'package/luci-theme-argon/**'
-      - 'package/luci-app-buerwrt-ads/**'
-      - 'files/**'
-      - '.github/workflows/build-xr30-bin.yml'
+  # 只保留手动触发：push 不再自动跑（避免一次推送点亮多个构建、白烧 Actions 分钟）
+  # 需要它时到 Actions 页面点 Run workflow
   workflow_dispatch:
     inputs:
       variant:

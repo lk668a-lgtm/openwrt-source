@@ -15,13 +15,8 @@ name: BUER-WRT NN6000 v2 (重打包 iStoreOS 底座 + 内置 tkproxy)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [buer-wrt]
-    paths:
-      - '.github/workflows/build-nn6000-istoreos.yml'
-      - 'xr30-build/**'
-      - 'files/**'
-      - 'package/luci-app-tkproxy/**'
+  # 只保留手动触发：push 不再自动跑（避免一次推送点亮多个构建、白烧 Actions 分钟）
+  # 需要它时到 Actions 页面点 Run workflow
 
 concurrency:
   group: nn6000-isto-${{ github.ref }}

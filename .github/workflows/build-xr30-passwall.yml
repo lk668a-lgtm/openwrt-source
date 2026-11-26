@@ -11,9 +11,11 @@ on:
   workflow_dispatch:
   push:
     branches: [buer-wrt]
+    # 只认「内置插件包」和它被铺进镜像的装配脚本：换 ipk 才重编，别的改动一律不触发
+    # 故意不列本 workflow 文件本身：改 YAML 不自动重跑，需要时手动 Run workflow
     paths:
-      - '.github/workflows/build-xr30-passwall.yml'
-      - 'xr30-build/**'
+      - 'xr30-build/pkgs/**'
+      - 'xr30-build/make-files.sh'
 
 permissions:
   contents: write
